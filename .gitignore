@@ -1,0 +1,56 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.obj
+*.dll
+*.dylib
+
+# Environment variables & sensitive credentials
+.env
+.env.*
+!.env.example
+*.env.local
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Browser & session profiles (Playwright / Chrome User Data directories)
+*_session/
+*_session_run/
+careerbuilder_session_run/
+glassdoor_session/
+google_search_session/
+himalayas_session/
+jobleads_session/
+jooble_session/
+naukri_session/
+wellfound_direct_session/
+workatastartup_session/
+ziprecruiter_session/
+
+# Crash dumps & Chrome logs
+Crashpad/
+*.log
+*.pma
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
