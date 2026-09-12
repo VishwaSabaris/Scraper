@@ -14,12 +14,16 @@ def clean_html(raw_html):
     text = soup.get_text(separator=" ")
     return re.sub(r'\s+', ' ', text).strip()
 
-def scrape_workable_jobs(job_role, location="", max_jobs=50):
+def scrape_workable_jobs(job_role, location="", max_jobs=50, filter_params=None, **kwargs):
     """
     Scrapes job listings from jobs.workable.com via its API endpoint.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    print(f"[*] Workable: Fetching job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("query") or job_role
+    effective_loc = fp.get("location") or location or ""
+    
+    print(f"[*] Workable: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -33,12 +37,15 @@ def scrape_workable_jobs(job_role, location="", max_jobs=50):
     
     while fetched_count < max_jobs:
         params = {
-            "query": job_role
+            "query": effective_role
         }
-        if location:
-            params["location"] = location
+        if effective_loc:
+            params["location"] = effective_loc
         if page_token:
             params["pageToken"] = page_token
+        for k in ["workplace", "employment_type", "department"]:
+            if fp.get(k):
+                params[k] = fp[k]
             
         try:
             res = execute_request("https://jobs.workable.com/api/v1/jobs", method="GET", params=params, headers=headers, timeout=20)

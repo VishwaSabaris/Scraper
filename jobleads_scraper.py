@@ -37,21 +37,34 @@ def get_jobleads_country_code(location):
         
     return "us"
 
-async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=False):
+async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=False, filter_params=None, **kwargs):
     """
     Scrapes job listings from jobleads.com using Playwright chromium persistent context.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    country_code = get_jobleads_country_code(location)
-    encoded_role = urllib.parse.quote(job_role.strip())
+    fp = filter_params or {}
+    effective_role = fp.get("q") or job_role
+    effective_loc = fp.get("location") or location or ""
     
-    if location and location.strip():
-        encoded_loc = urllib.parse.quote(location.strip())
-        url = f"https://www.jobleads.com/{country_code}/jobs/l/{encoded_loc}/q/{encoded_role}"
+    country_code = get_jobleads_country_code(effective_loc)
+    encoded_role = urllib.parse.quote(effective_role.strip())
+    
+    if effective_loc and effective_loc.strip():
+        encoded_loc = urllib.parse.quote(effective_loc.strip())
+        base_url = f"https://www.jobleads.com/{country_code}/jobs/l/{encoded_loc}/q/{encoded_role}"
     else:
-        url = f"https://www.jobleads.com/{country_code}/jobs/q/{encoded_role}"
+        base_url = f"https://www.jobleads.com/{country_code}/jobs/q/{encoded_role}"
 
-    print(f"[*] JobLeads: Fetching job listings for '{job_role}' in '{location or 'Any'}' (Country: {country_code.upper()})...")
+    extra_q = {}
+    for k in ["posted", "salary", "workSetting", "exp"]:
+        if fp.get(k):
+            extra_q[k] = fp[k]
+    if extra_q:
+        url = f"{base_url}?{urllib.parse.urlencode(extra_q)}"
+    else:
+        url = base_url
+
+    print(f"[*] JobLeads: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}' (Country: {country_code.upper()})...")
     print(f"[*] JobLeads URL: {url}")
     
     user_dir = os.path.abspath("./jobleads_session")

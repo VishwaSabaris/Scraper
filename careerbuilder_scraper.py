@@ -7,12 +7,16 @@ from playwright.async_api import async_playwright
 from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv
 import random
 
-async def scrape_careerbuilder_jobs(job_role, location="", headless=False):
+async def scrape_careerbuilder_jobs(job_role, location="", headless=False, filter_params=None, **kwargs):
     """
     Scrapes direct careerbuilder.com job listings and apply links for any role/location.
-    Performs incremental card extraction during scrolling to extract 100% of rendered job cards.
+    Supports dynamic filter parameters and deep scrolling extraction.
     """
-    print(f"[*] CareerBuilder: Extracting direct careerbuilder.com job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("q") or job_role
+    effective_loc = fp.get("where") or location or ""
+    
+    print(f"[*] CareerBuilder: Extracting direct careerbuilder.com job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
     user_dir = os.path.abspath("./careerbuilder_session_run")
     os.makedirs(user_dir, exist_ok=True)
@@ -40,9 +44,15 @@ async def scrape_careerbuilder_jobs(job_role, location="", headless=False):
         page = context.pages[0] if context.pages else await context.new_page()
         
         # Build search URL
-        formatted_role = urllib.parse.quote(job_role.strip())
-        formatted_location = urllib.parse.quote(location.strip())
-        url = f"https://www.careerbuilder.com/job-listings/search?q={formatted_role}&where={formatted_location}"
+        params = {
+            "q": effective_role.strip(),
+            "where": effective_loc.strip()
+        }
+        for k in ["posted", "emp", "cb_workplace"]:
+            if fp.get(k):
+                params[k] = fp[k]
+                
+        url = f"https://www.careerbuilder.com/job-listings/search?{urllib.parse.urlencode(params)}"
         
         print(f"[*] CareerBuilder: Navigating to search results page ({url})...")
         try:

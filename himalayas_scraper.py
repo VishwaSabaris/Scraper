@@ -32,14 +32,18 @@ def build_himalayas_url(job_role, location=""):
     else:
         return "https://himalayas.app/jobs?view=filters&src=adv"
 
-async def scrape_himalayas_jobs_api(job_role, location="", max_pages=5):
+async def scrape_himalayas_jobs_api(job_role, location="", max_pages=5, filter_params=None, **kwargs):
     """
     Scrapes job listings using Himalayas official public search JSON API.
     Fast, reliable, and completely bypasses Cloudflare bot checks.
     """
-    target_web_url = build_himalayas_url(job_role, location)
+    fp = filter_params or {}
+    effective_role = fp.get("q") or job_role
+    effective_loc = fp.get("country") or location or ""
+    
+    target_web_url = build_himalayas_url(effective_role, effective_loc)
     print(f"[*] Himalayas Web Link: {target_web_url}")
-    print(f"[*] Himalayas: Fetching job listings via API for '{job_role}' in '{location or 'Worldwide'}'...")
+    print(f"[*] Himalayas: Fetching job listings via API for '{effective_role}' in '{effective_loc or 'Worldwide'}'...")
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -47,10 +51,13 @@ async def scrape_himalayas_jobs_api(job_role, location="", max_pages=5):
     }
     
     params = {}
-    if job_role:
-        params["q"] = job_role
-    if location:
-        params["country"] = location
+    if effective_role:
+        params["q"] = effective_role
+    if effective_loc:
+        params["country"] = effective_loc
+    for k in ["experience_level", "employment_type", "min_salary", "skills", "timezone", "sort"]:
+        if fp.get(k):
+            params[k] = fp[k]
         
     jobs_data = []
     
@@ -266,12 +273,12 @@ async def scrape_himalayas_jobs_playwright(job_role, location="", max_pages=5, h
             
     return jobs_data
 
-async def scrape_himalayas_jobs(job_role, location="", max_pages=5, headless=False):
+async def scrape_himalayas_jobs(job_role, location="", max_pages=5, headless=False, filter_params=None, **kwargs):
     """
     Main scraper for Himalayas jobs.
     Uses public API primary, falls back to Playwright if needed.
     """
-    results = await scrape_himalayas_jobs_api(job_role, location, max_pages=max_pages)
+    results = await scrape_himalayas_jobs_api(job_role, location, max_pages=max_pages, filter_params=filter_params, **kwargs)
     if results:
         print(f"[+] Himalayas Scraper completed. Total results: {len(results)}")
         return results

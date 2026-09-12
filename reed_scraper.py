@@ -9,20 +9,16 @@ from bs4 import BeautifulSoup
 from utils import save_to_csv, is_role_match
 from request_client import execute_async_request
 
-async def scrape_reed_jobs(job_role, location="", max_pages=None, strict_role_match=True):
+async def scrape_reed_jobs(job_role, location="", max_pages=None, strict_role_match=True, filter_params=None, **kwargs):
     """
     Scrapes maximum job listings from Reed.co.uk for a given job role and location.
-    
-    Args:
-        job_role (str): Job role or keyword search (e.g. "Python Developer")
-        location (str): Location filter (e.g. "London")
-        max_pages (int, optional): Maximum pages to scrape. If None, scrapes all available pages up to 100.
-        strict_role_match (bool): If True, uses `is_role_match` to filter out irrelevant job titles.
-        
-    Returns:
-        list[dict]: List of extracted job dictionaries matching the project schema.
+    Supports dynamic filter parameters and deep pagination.
     """
-    print(f"[*] Reed.co.uk: Scraping maximum job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("keywords") or job_role
+    effective_loc = fp.get("location") or location or ""
+    
+    print(f"[*] Reed.co.uk: Scraping maximum job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -33,9 +29,12 @@ async def scrape_reed_jobs(job_role, location="", max_pages=None, strict_role_ma
     session = requests.Session()
     session.headers.update(headers)
 
-    query_params = {'keywords': job_role.strip()}
-    if location and location.strip():
-        query_params['location'] = location.strip()
+    query_params = {'keywords': effective_role.strip()}
+    if effective_loc and effective_loc.strip():
+        query_params['location'] = effective_loc.strip()
+    for k in ["salarymin", "salarymax", "hidesalaryjobs", "fulltime", "parttime", "permanent", "contract", "temp", "workfromhome", "hybrid", "distance", "datecreatedoffset"]:
+        if fp.get(k):
+            query_params[k] = fp[k]
 
     base_url = "https://www.reed.co.uk/jobs?" + urllib.parse.urlencode(query_params)
     print(f"[*] Reed.co.uk: Navigating to search URL: {base_url}")

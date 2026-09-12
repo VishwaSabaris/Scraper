@@ -6,12 +6,16 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay
 
-async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False):
+async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False, filter_params=None, **kwargs):
     """
     Scrapes job listings from naukri.com using Playwright chromium persistent context.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    print(f"[*] Naukri: Fetching job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("keywords") or job_role
+    effective_loc = fp.get("location") or location or ""
+    
+    print(f"[*] Naukri: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
     user_dir = os.path.abspath("./naukri_session")
     os.makedirs(user_dir, exist_ok=True)
@@ -19,13 +23,12 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False)
     jobs_data = []
     
     # Format URL elements
-    formatted_role_path = job_role.lower().strip().replace(" ", "-")
-    # Keep only alphanumeric and hyphens for the path
+    formatted_role_path = effective_role.lower().strip().replace(" ", "-")
     formatted_role_path = "".join(c for c in formatted_role_path if c.isalnum() or c == "-")
     
     formatted_location_path = ""
-    if location:
-        formatted_location_path = location.lower().strip().replace(" ", "-")
+    if effective_loc:
+        formatted_location_path = effective_loc.lower().strip().replace(" ", "-")
         formatted_location_path = "".join(c for c in formatted_location_path if c.isalnum() or c == "-")
 
     async with async_playwright() as p:
@@ -57,10 +60,21 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False)
                 
             for page_idx in range(1, max_pages + 1):
                 # Construct search URL for this page
-                if location:
-                    url = f"https://www.naukri.com/{formatted_role_path}-jobs-in-{formatted_location_path}?k={urllib.parse.quote(job_role)}&l={urllib.parse.quote(location)}&pageNo={page_idx}"
+                extra_params = {
+                    "k": effective_role,
+                    "pageNo": page_idx
+                }
+                if effective_loc:
+                    extra_params["l"] = effective_loc
+                for k in ["experience", "salaryRange", "wfhType", "jobAge", "educationType"]:
+                    if fp.get(k):
+                        extra_params[k] = fp[k]
+                        
+                query_str = urllib.parse.urlencode(extra_params)
+                if formatted_location_path:
+                    url = f"https://www.naukri.com/{formatted_role_path}-jobs-in-{formatted_location_path}?{query_str}"
                 else:
-                    url = f"https://www.naukri.com/{formatted_role_path}-jobs?k={urllib.parse.quote(job_role)}&pageNo={page_idx}"
+                    url = f"https://www.naukri.com/{formatted_role_path}-jobs?{query_str}"
                     
                 print(f"[*] Naukri: Navigating to page {page_idx} ({url})...")
                 

@@ -42,12 +42,16 @@ def matches_location(job_location, search_location):
             
     return False
 
-async def scrape_remote_jobs(job_role, location="", max_pages=5):
+async def scrape_remote_jobs(job_role, location="", max_pages=5, filter_params=None, **kwargs):
     """
     Scrapes job listings from remote.com using Next.js push-script extraction.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    print(f"[*] Remote.com: Fetching job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("query") or job_role
+    effective_loc = fp.get("location") or location or ""
+    
+    print(f"[*] Remote.com: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -58,12 +62,17 @@ async def scrape_remote_jobs(job_role, location="", max_pages=5):
     jobs_data = []
     
     for page in range(1, max_pages + 1):
-        formatted_role = urllib.parse.quote(job_role)
-        if location:
-            formatted_loc = urllib.parse.quote(location)
-            url = f"https://remote.com/jobs/all?query={formatted_role}&country={formatted_loc}&page={page}"
-        else:
-            url = f"https://remote.com/jobs/all?query={formatted_role}&page={page}"
+        params = {
+            "query": effective_role,
+            "page": page
+        }
+        if effective_loc:
+            params["country"] = effective_loc
+        for k in ["category", "job_type"]:
+            if fp.get(k):
+                params[k] = fp[k]
+                
+        url = f"https://remote.com/jobs/all?{urllib.parse.urlencode(params)}"
         print(f"[*] Remote.com: Navigating to page {page} ({url})...")
         
         try:

@@ -24,26 +24,34 @@ def get_target_domain(location):
         
     return "ziprecruiter.com"
 
-async def scrape_ziprecruiter_jobs(job_role, location="", max_pages=1, headless=False):
+async def scrape_ziprecruiter_jobs(job_role, location="", max_pages=1, headless=False, filter_params=None, **kwargs):
     """
     Scrapes job listings from ZipRecruiter using Playwright persistent context.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    domain = get_target_domain(location)
+    fp = filter_params or {}
+    effective_role = fp.get("search") or job_role
+    effective_loc = fp.get("location") or location or ""
     
-    print(f"[*] ZipRecruiter: Fetching job listings for '{job_role}' in '{location or 'Any'}' (Target Domain: {domain})...")
+    domain = get_target_domain(effective_loc)
+    
+    print(f"[*] ZipRecruiter: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}' (Target Domain: {domain})...")
     
     user_dir = os.path.abspath("./ziprecruiter_session")
     os.makedirs(user_dir, exist_ok=True)
     
     jobs_data = []
     
-    formatted_role = urllib.parse.quote(job_role.strip())
-    formatted_location = urllib.parse.quote(location.strip()) if location else ""
-    
-    base_url = f"https://www.{domain}/jobs-search?search={formatted_role}"
-    if formatted_location:
-        base_url += f"&location={formatted_location}"
+    params = {
+        "search": effective_role.strip()
+    }
+    if effective_loc:
+        params["location"] = effective_loc.strip()
+    for k in ["days", "refine_by_salary", "radius"]:
+        if fp.get(k):
+            params[k] = fp[k]
+            
+    base_url = f"https://www.{domain}/jobs-search?{urllib.parse.urlencode(params)}"
         
     async with async_playwright() as p:
         try:

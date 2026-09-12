@@ -7,12 +7,16 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, human_delay
 
-async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=False):
+async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=False, filter_params=None, **kwargs):
     """
     Scrapes job listings from glassdoor.com using Playwright non-headless persistent browser context.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    print(f"[*] Glassdoor: Fetching job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("sc.keyword") or job_role
+    effective_loc = fp.get("location") or location or ""
+    
+    print(f"[*] Glassdoor: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
     user_dir = os.path.abspath("./glassdoor_session")
     os.makedirs(user_dir, exist_ok=True)
@@ -42,7 +46,7 @@ async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=Fal
         # 1. Resolve Location ID via AJAX if location is provided
         loc_id = ""
         loc_type = ""
-        if location:
+        if effective_loc:
             # Set cookie / initialize by visiting the homepage
             try:
                 await page.goto("https://www.glassdoor.com/Job/index.htm", timeout=20000)
@@ -50,7 +54,7 @@ async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=Fal
             except Exception:
                 pass
                 
-            ajax_url = f"https://www.glassdoor.com/findPopularLocationAjax.htm?maxLocationsToReturn=10&term={urllib.parse.quote(location)}"
+            ajax_url = f"https://www.glassdoor.com/findPopularLocationAjax.htm?maxLocationsToReturn=10&term={urllib.parse.quote(effective_loc)}"
             print(f"[*] Glassdoor: Resolving location details via AJAX ({ajax_url})...")
             try:
                 await page.goto(ajax_url, timeout=20000)
@@ -60,15 +64,18 @@ async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=Fal
                     loc = data[0]
                     loc_id = loc.get('locationId', '')
                     loc_type = loc.get('locationType', '')
-                    print(f"[+] Glassdoor: Resolved '{location}' to ID: {loc_id}, Type: {loc_type}")
+                    print(f"[+] Glassdoor: Resolved '{effective_loc}' to ID: {loc_id}, Type: {loc_type}")
             except Exception as e:
                 print(f"[!] Glassdoor: Error resolving location ID: {e}")
                 
         # 2. Navigate to search page
-        formatted_role = urllib.parse.quote(job_role)
+        formatted_role = urllib.parse.quote(effective_role)
         search_url = f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={formatted_role}"
         if loc_id and loc_type:
             search_url += f"&locT={loc_type}&locId={loc_id}"
+        for k in ["fromAge", "remoteWorkType", "jobType"]:
+            if fp.get(k):
+                search_url += f"&{k}={fp[k]}"
             
         print(f"[*] Glassdoor: Navigating to search results ({search_url})...")
         try:

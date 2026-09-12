@@ -212,6 +212,12 @@ def search_websites_dataforseo_batch(
 
         tasks = data.get("tasks", [])
         for task in tasks:
+            task_status = task.get("status_code")
+            task_msg = task.get("status_message")
+            if task_status and task_status != 20000:
+                logger.warning(f"DataForSEO task issue [{task_status}]: {task_msg}")
+                continue
+
             company_tag = task.get("tag") or (task.get("data", {}).get("keyword") if task.get("data") else None)
             if not company_tag:
                 continue

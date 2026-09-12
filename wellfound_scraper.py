@@ -7,14 +7,21 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match
 
-async def scrape_wellfound_jobs(job_role, location=""):
+async def scrape_wellfound_jobs(job_role, location="", max_pages=3, filter_params=None, **kwargs):
     """Scrapes 100% direct wellfound.com job listings and apply links for any role/location."""
-    query = f'site:wellfound.com/jobs "{job_role}"'
-    if location:
-        query += f' "{location}"'
+    fp = filter_params or {}
+    effective_role = fp.get("role") or job_role
+    effective_loc = fp.get("location") or location or ""
+    
+    query = f'site:wellfound.com/jobs "{effective_role}"'
+    if effective_loc:
+        query += f' "{effective_loc}"'
+    for k in ["salary", "equity", "stage"]:
+        if fp.get(k):
+            query += f' "{fp[k]}"'
         
     google_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-    print(f"[*] Wellfound: Extracting direct wellfound.com job listings for '{job_role}' in '{location}'...")
+    print(f"[*] Wellfound: Extracting direct wellfound.com job listings for '{effective_role}' in '{effective_loc}'...")
     
     user_dir = os.path.abspath("./wellfound_direct_session")
     os.makedirs(user_dir, exist_ok=True)
@@ -41,7 +48,7 @@ async def scrape_wellfound_jobs(job_role, location=""):
         page = context.pages[0] if context.pages else await context.new_page()
         
         try:
-            for g_page in range(3): # Scrape 3 pages of Google Search results (up to 30 results)
+            for g_page in range(max_pages): # Scrape pages of Google Search results
                 start_offset = g_page * 10
                 google_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&start={start_offset}"
                 print(f"[*] Wellfound: Navigating to Google page {g_page + 1} ({google_url})...")

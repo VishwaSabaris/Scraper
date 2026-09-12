@@ -41,6 +41,10 @@ ziprecruiter_session/
 Crashpad/
 *.log
 *.pma
+scratch/*.html
+scratch/*.png
+scratch/*_session/
+scratch/*_session*/
 
 # IDE & Editor files
 .vscode/

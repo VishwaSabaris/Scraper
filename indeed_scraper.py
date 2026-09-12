@@ -54,10 +54,11 @@ async def check_and_wait_for_challenge(page, timeout_sec=15):
                 print("[+] Indeed: Page loaded successfully.")
             break
 
-async def scrape_indeed_jobs(job_role, location, max_pages=3, headless=False):
-    """Scrapes Indeed using stealth Playwright, UI pagination clicking, and strict role matching."""
-    formatted_role = job_role.replace(" ", "+")
-    formatted_location = location.replace(" ", "+")
+async def scrape_indeed_jobs(job_role, location="", max_pages=3, headless=False, filter_params=None, **kwargs):
+    """Scrapes Indeed using stealth Playwright, dynamic filters, and pagination."""
+    fp = filter_params or {}
+    effective_role = fp.get("q") or job_role
+    effective_loc = fp.get("l") or location or ""
     
     jobs_data = []
     
@@ -70,8 +71,18 @@ async def scrape_indeed_jobs(job_role, location, max_pages=3, headless=False):
         page = await context.new_page()
         
         for page_idx in range(max_pages):
-            target_url = f"https://www.indeed.com/jobs?q={formatted_role}&l={formatted_location}&start={page_idx * 10}"
-            print(f"[*] Indeed: Navigating to page {page_idx + 1}...")
+            params = {
+                "q": effective_role,
+                "start": page_idx * 10
+            }
+            if effective_loc:
+                params["l"] = effective_loc
+            for k in ["fromage", "jt", "radius", "sort"]:
+                if fp.get(k):
+                    params[k] = fp[k]
+                    
+            target_url = f"https://www.indeed.com/jobs?{urllib.parse.urlencode(params)}"
+            print(f"[*] Indeed: Navigating to page {page_idx + 1} ({target_url})...")
             
             try:
                 navigated_via_click = False

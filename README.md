@@ -1,65 +1,77 @@
-# Multi-Platform Job Scraper & Company Website Intelligence Suite
+# Universal 26-Platform Job Scraper & Intelligence Suite
 
-A modular, high-performance job scraping and intelligence tool that extracts job postings across multiple global platforms, automates proxy rotation & health checking, and resolves official company websites.
+An enterprise-grade, high-performance job scraping, dynamic filtering, and corporate intelligence suite. It extracts job postings across **26 global and Indian job portals**, automatically adapts query filters, omits unsupported parameters gracefully, standardizes dates, enriches job descriptions/skills, and resolves official corporate websites.
 
 ---
 
 ## 🌟 Features
 
-- **Multi-Platform Support**: Scrapers tailored for top tech and general job boards:
-  - **LinkedIn** (`linkedin_scraper.py`)
-  - **Indeed** (`indeed_scraper.py`)
-  - **Glassdoor** (`glassdoor_scraper.py`)
-  - **Reed.co.uk** (`reed_scraper.py`)
-  - **ZipRecruiter** (`ziprecruiter_scraper.py`)
-  - **Himalayas** (`himalayas_scraper.py`)
-  - **Remote.co / Remote** (`remote_scraper.py`)
-  - **JobLeads** (`jobleads_scraper.py`)
-  - **Wellfound / AngelList** (`wellfound_scraper.py`)
-  - **Workable** (`workable_scraper.py`)
-  - **WorkAtAStartup** (`workatastartup_scraper.py`)
-  - **Jobspresso** (`jobspresso_scraper.py`)
-  - **Jooble** (`jooble_scraper.py`)
-  - **Naukri** (`naukri_scraper.py`)
-  - **CareerBuilder** (`careerbuilder_scraper.py`)
+- **Universal 26-Portal Coverage**:
+  - **Indian Job Boards**: Foundit (Monster India), Apna.co, Instahyre, Internshala, Shine, TimesJobs, Freshersworld, Naukri.
+  - **Global & Tech Job Boards**: LinkedIn, Indeed, Glassdoor, Reed.co.uk, BuiltIn, Careerjet, Dice, SimplyHired, CareerBuilder, Jooble, JobLeads, Himalayas, Wellfound (AngelList), Remote.co / Remote, Workable, WorkAtAStartup, ZipRecruiter, Jobspresso.
+- **Dynamic Filter Adaptation Engine** (`filter_engine.py`):
+  - Automatically translates search filters (role, location, work mode, experience, salary, freshness, job type, skills, company) into native portal parameters.
+  - Gracefully omits unsupported parameters per portal while logging actions.
+- **Interactive Multi-Portal Master Runner** (`scrape_all_jobs_master.py`):
+  - Interactive CLI prompt with guided questionnaire or non-interactive flag execution.
+  - Multi-page uncapped pagination with concurrency controls.
+- **Universal Date Standardizer** (`utils.py`):
+  - Automatically normalizes 13-digit Unix millisecond epoch timestamps, relative strings (`"30+ days ago"`), and ISO UTC dates into clean ISO `YYYY-MM-DD`.
+- **Enterprise Company Website Resolver** (`resolve_company_websites.py` & `find_company_websites.py`):
+  - High-speed domain resolution engine with curated corporate mapping and persistent disk caching (`data/company_websites.csv`).
 - **Automated Proxy Rotation & Health Checking**:
   - `proxy_manager.py` & `proxy_refresher.py` continuously validate, score latency, and rotate proxies to prevent rate limiting and IP blocks.
-  - Multi-threaded proxy latency verification.
-- **Company Website Resolver**:
-  - `find_company_websites.py`: Automated company domain resolution with multi-engine fallback and domain exclusions.
-- **Stealth & Anti-Bot Bypass**:
-  - Playwright stealth automation, browser context isolation, and custom headers.
+- **Stealth & Anti-Bot Protection**:
+  - Playwright stealth automation, browser context isolation, TLS browser impersonation (`curl_cffi`), and custom browser headers.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-├── .env.example                     # Environment configuration template
-├── .gitignore                        # Git exclusion rules
-├── requirements.txt                  # Python dependencies
-├── proxy_manager.py                  # Proxy management & rotation logic
-├── proxy_refresher.py                # Background proxy crawler & health-checker
-├── request_client.py                 # Resilient HTTP request client
-├── find_company_websites.py          # Resolves official company domains
-├── find_company_websites_playwright.py
-├── scrape_filtered_jobs.py           # Unified runner for filtered job search
-├── utils.py                          # Common extraction and parsing utilities
+├── filter_engine.py                 # Dynamic filter translation & capability matrix
+├── scrape_all_jobs_master.py        # Master 26-portal interactive/CLI runner
+├── resolve_company_websites.py      # High-speed company website resolver & date normalizer
+├── find_company_websites.py         # Secondary company domain discovery engine
+├── utils.py                         # Universal date normalizer, stealth headers, role matchers
+├── proxy_manager.py                 # Multi-threaded proxy rotation & scoring
+├── proxy_refresher.py               # Background proxy harvester & health checker
+├── request_client.py                # Resilient HTTP request client with retry logic
+├── requirements.txt                 # Python dependencies
+├── .gitignore                       # Git exclusions
 │
-├── [scrapers]
+├── [Portal Scrapers]
+│   ├── foundit_scraper.py
+│   ├── apna_scraper.py
+│   ├── instahyre_scraper.py
+│   ├── internshala_scraper.py
+│   ├── shine_scraper.py
+│   ├── adzuna_scraper.py
+│   ├── builtin_scraper.py
+│   ├── careerjet_scraper.py
+│   ├── dice_scraper.py
+│   ├── simplyhired_scraper.py
+│   ├── timesjobs_scraper.py
+│   ├── freshersworld_scraper.py
 │   ├── linkedin_scraper.py
 │   ├── indeed_scraper.py
 │   ├── glassdoor_scraper.py
 │   ├── reed_scraper.py
-│   ├── ziprecruiter_scraper.py
+│   ├── naukri_scraper.py
+│   ├── careerbuilder_scraper.py
+│   ├── jooble_scraper.py
+│   ├── jobleads_scraper.py
 │   ├── himalayas_scraper.py
 │   ├── remote_scraper.py
 │   ├── wellfound_scraper.py
 │   ├── workable_scraper.py
-│   ├── ...
+│   ├── ziprecruiter_scraper.py
+│   └── jobspresso_scraper.py
 │
-├── data/                             # Scraped CSV datasets & proxy lists
-└── scripts/                          # Proxy testing and utility scripts
+├── data/                            # Datasets, company website cache & proxy lists
+│   ├── company_websites.csv         # Persistent resolved corporate domains
+│   └── low_latency_proxies.txt      # Verified fast proxies
+└── scratch/                         # Analysis scripts and verification tools
 ```
 
 ---
@@ -76,8 +88,8 @@ A modular, high-performance job scraping and intelligence tool that extracts job
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo-name>.git
-cd <your-repo-name>
+git clone https://github.com/VishwaSabaris/Scraper.git
+cd Scraper
 
 python -m venv venv
 # On Windows (PowerShell):
@@ -89,47 +101,40 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 3. Environment Configuration
-
-Copy the example configuration:
-
-```bash
-cp .env.example .env
-```
-
-Adjust the proxy and API configuration inside `.env` as needed.
-
 ---
 
 ## 🛠️ Usage
 
-### Run Job Scrapers
+### 1. Interactive Master Job Search (Recommended)
+Run the guided questionnaire prompt:
 ```bash
-# Run filtered job extraction
-python scrape_filtered_jobs.py
+python scrape_all_jobs_master.py
+```
+This lets you select target portals (`all`, `indian`, `global`, or custom), work mode, experience level, salary, freshness, and max pages.
 
-# Or run individual platform scrapers directly:
-python linkedin_scraper.py
-python indeed_scraper.py
-python glassdoor_scraper.py
+### 2. CLI Automated Execution
+```bash
+python scrape_all_jobs_master.py \
+    --role "DevOps Engineer" \
+    --location "Bangalore" \
+    --work-mode "remote" \
+    --freshness 7 \
+    --portals "foundit,apna,instahyre,shine,timesjobs,dice" \
+    --pages 3 \
+    --output "devops_jobs.csv"
 ```
 
-### Resolve Company Websites
+### 3. Standardize Dates & Resolve Company Websites
 ```bash
-python find_company_websites.py
-```
-
-### Test Proxy Health
-```bash
-python test_proxy_rotation.py
+python resolve_company_websites.py all_jobs_vvs.csv
 ```
 
 ---
 
 ## 🔒 Security & Privacy
 
-- Keep your `.env` file private and never commit credentials or API keys.
-- Browser profiles and session data (`*_session/`) are ignored by `.env` / `.gitignore` to avoid leaking session cookies.
+- Sensitive credentials and `.env` files are excluded via `.gitignore`.
+- Playwright user profiles and session directories (`*_session/`) are automatically ignored.
 
 ---
 

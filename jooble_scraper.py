@@ -7,15 +7,19 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, human_delay
 
-async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False):
+async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False, filter_params=None, **kwargs):
     """
     Scrapes job listings from in.jooble.org using Playwright persistent browser context.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    role_slug = re.sub(r'[^a-zA-Z0-9]+', '-', job_role.strip().lower()).strip('-')
-    loc_slug = re.sub(r'[^a-zA-Z0-9]+', '-', location.strip().lower()).strip('-') if location else ""
+    fp = filter_params or {}
+    effective_role = fp.get("role") or job_role
+    effective_loc = fp.get("location") or location or ""
     
-    print(f"[*] Jooble: Fetching job listings for '{job_role}' in '{location or 'India'}'...")
+    role_slug = re.sub(r'[^a-zA-Z0-9]+', '-', effective_role.strip().lower()).strip('-')
+    loc_slug = re.sub(r'[^a-zA-Z0-9]+', '-', effective_loc.strip().lower()).strip('-') if effective_loc else ""
+    
+    print(f"[*] Jooble: Fetching job listings for '{effective_role}' in '{effective_loc or 'India'}'...")
     
     user_dir = os.path.abspath("./jooble_session")
     os.makedirs(user_dir, exist_ok=True)
@@ -52,7 +56,18 @@ async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False)
             else:
                 base_url = f"https://in.jooble.org/jobs-{role_slug}"
                 
-            url = f"{base_url}?p={page_idx}" if page_idx > 1 else base_url
+            query_parts = {}
+            if page_idx > 1:
+                query_parts["p"] = page_idx
+            for k in ["salary", "date", "rg", "telework"]:
+                if fp.get(k):
+                    query_parts[k] = fp[k]
+                    
+            if query_parts:
+                url = f"{base_url}?{urllib.parse.urlencode(query_parts)}"
+            else:
+                url = base_url
+                
             print(f"[*] Jooble: Navigating to page {page_idx} ({url})...")
             
             retries = 3

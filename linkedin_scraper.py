@@ -93,12 +93,23 @@ async def scroll_and_load_all_jobs(page):
         last_card_count = card_count
         scroll_attempts += 1
 
-async def scrape_linkedin_jobs(job_role, location, fetch_details=False, batch_size=4, headless=False):
-    """Scrapes LinkedIn using target keywords, dynamic scrolling, and strict role matching."""
-    formatted_role = job_role.replace(" ", "%20")
-    formatted_location = location.replace(" ", "%20")
+async def scrape_linkedin_jobs(job_role, location="", fetch_details=False, batch_size=4, headless=False, filter_params=None, **kwargs):
+    """Scrapes LinkedIn using target keywords, dynamic scrolling, strict role matching, and dynamic filters."""
+    fp = filter_params or {}
+    effective_role = fp.get("keywords") or job_role
+    effective_loc = fp.get("location") or location or ""
     
-    base_url = f"https://www.linkedin.com/jobs/search?keywords={formatted_role}&location={formatted_location}&f_TPR=r604800"
+    params = {
+        "keywords": effective_role,
+        "location": effective_loc
+    }
+    for k in ["f_TPR", "f_WT", "f_E", "f_JT", "f_AL", "f_EA", "sortBy"]:
+        if fp.get(k):
+            params[k] = fp[k]
+    if "f_TPR" not in params:
+        params["f_TPR"] = "r604800"
+        
+    base_url = f"https://www.linkedin.com/jobs/search?{urllib.parse.urlencode(params)}"
     
     jobs_data = []
     
@@ -110,7 +121,7 @@ async def scrape_linkedin_jobs(job_role, location, fetch_details=False, batch_si
         context = await create_stealth_context(browser)
         
         page = await context.new_page()
-        print(f"[*] LinkedIn: Searching for '{job_role}' in '{location}'...")
+        print(f"[*] LinkedIn: Searching for '{effective_role}' in '{effective_loc}' ({base_url})...")
         await page.goto(base_url)
         await human_delay(4, 7)
         

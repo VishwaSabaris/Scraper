@@ -101,12 +101,90 @@ async def human_delay(min_sec=2, max_sec=5):
     delay = random.uniform(min_sec, max_sec)
     await asyncio.sleep(delay)
 
+import datetime
+import re
+
+def normalize_date_posted(val) -> str:
+    """
+    Converts epoch timestamps (ms/s), relative dates ('Today', '2d ago', '30+ days ago'), 
+    month strings ('1 September'), and non-standard date strings into clean ISO format YYYY-MM-DD.
+    """
+    if val is None or pd.isna(val) if 'pd' in globals() else False:
+        return 'N/A'
+        
+    val_str = str(val).strip()
+    if not val_str or val_str.lower() in ['n/a', 'unknown', 'none', 'nan', 'save', 'null']:
+        return 'N/A'
+    
+    # 1. Pure numeric epoch timestamp
+    if val_str.isdigit() or (val_str.replace('.', '', 1).isdigit() and '.' in val_str):
+        try:
+            num = float(val_str)
+            if num > 1e11:  # Milliseconds timestamp
+                ts = num / 1000.0
+            elif num > 1e8:  # Seconds timestamp
+                ts = num
+            else:
+                return 'N/A'
+            return datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+        except Exception:
+            return 'N/A'
+
+    # 2. ISO timestamp format: 2026-09-12T... or YYYY-MM-DD
+    iso_match = re.match(r'^(\d{4}-\d{2}-\d{2})', val_str)
+    if iso_match:
+        return iso_match.group(1)
+
+    # 3. Relative date formats
+    today = datetime.date(2026, 9, 12)
+    lower = val_str.lower()
+    
+    if any(k in lower for k in ['today', 'just', 'now', 'hour', 'min', 'sec', 'recent', 'few moments', 'active']):
+        return today.strftime('%Y-%m-%d')
+    if 'yesterday' in lower:
+        return (today - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        
+    months_match = re.search(r'(\d+)\+?\s*(?:m|month|months)', lower)
+    if months_match:
+        m = int(months_match.group(1))
+        return (today - datetime.timedelta(days=m * 30)).strftime('%Y-%m-%d')
+
+    weeks_match = re.search(r'(\d+)\+?\s*(?:w|week|weeks)', lower)
+    if weeks_match:
+        w = int(weeks_match.group(1))
+        return (today - datetime.timedelta(days=w * 7)).strftime('%Y-%m-%d')
+
+    days_match = re.search(r'(\d+)\+?\s*(?:d|day|days)', lower)
+    if days_match:
+        d = int(days_match.group(1))
+        return (today - datetime.timedelta(days=d)).strftime('%Y-%m-%d')
+
+    # 4. Standard Date formats like DD-Mon-YYYY or DD/MM/YYYY or DD Month
+    for fmt in ('%d-%b-%Y', '%d-%m-%Y', '%d/%m/%Y', '%b %d, %Y', '%Y/%m/%d', '%d %B %Y', '%B %d %Y'):
+        try:
+            dt = datetime.datetime.strptime(val_str, fmt)
+            return dt.strftime('%Y-%m-%d')
+        except Exception:
+            pass
+
+    # 5. Formats without year like "1 September" or "September 1"
+    for fmt in ('%d %B', '%d %b', '%B %d', '%b %d'):
+        try:
+            dt = datetime.datetime.strptime(val_str, fmt)
+            # Default to current year 2026
+            dt = dt.replace(year=2026)
+            return dt.strftime('%Y-%m-%d')
+        except Exception:
+            pass
+
+    return 'N/A'
+
 def save_to_csv(data, filename="linkedin_jobs.csv"):
     if not data:
         print("[-] Process completed with no results to write.")
         return
         
-    keys = data[0].keys()
+    keys = list(data[0].keys())
     existing_links = set()
     existing_rows = []
     
@@ -121,17 +199,22 @@ def save_to_csv(data, filename="linkedin_jobs.csv"):
                         link = row.get("Apply Link", "")
                         if link:
                             existing_links.add(link)
-                        # Keep it as dict
+                        # Normalize date in existing row if needed
+                        if "Date Posted" in row:
+                            row["Date Posted"] = normalize_date_posted(row["Date Posted"])
                         existing_rows.append(row)
         except Exception as err:
             print(f"[!] Error reading existing CSV '{filename}': {err}")
             
-    # Filter new data to avoid adding duplicates
+    # Filter new data to avoid adding duplicates and normalize dates
     new_records = []
     for item in data:
         link = item.get("Apply Link", "")
         if link not in existing_links:
-            new_records.append(item)
+            clean_item = dict(item)
+            if "Date Posted" in clean_item:
+                clean_item["Date Posted"] = normalize_date_posted(clean_item["Date Posted"])
+            new_records.append(clean_item)
             existing_links.add(link)
             
     print(f"[*] CSV Append check: found {len(new_records)} new unique listings out of {len(data)} scraped.")

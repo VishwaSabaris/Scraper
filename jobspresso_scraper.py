@@ -12,12 +12,15 @@ from request_client import execute_async_request
 # Suppress BS4 XML parsing warning when using HTML parser on XML feed
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-async def scrape_jobspresso_jobs(job_role, location="", max_pages=5):
+async def scrape_jobspresso_jobs(job_role, location="", max_pages=5, filter_params=None, **kwargs):
     """
     Scrapes job listings from jobspresso.co using its paginated RSS feed.
-    Returns a list of structured job dictionaries.
+    Supports dynamic filter parameters and deep pagination.
     """
-    print(f"[*] Jobspresso: Fetching job listings for '{job_role}' in '{location or 'Any'}'...")
+    fp = filter_params or {}
+    effective_role = fp.get("s") or job_role
+    
+    print(f"[*] Jobspresso: Fetching job listings for '{effective_role}' in '{location or 'Any'}'...")
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -28,8 +31,7 @@ async def scrape_jobspresso_jobs(job_role, location="", max_pages=5):
     jobs_data = []
     
     for page in range(1, max_pages + 1):
-        # Format search role for Jobspresso feed URL
-        formatted_role = urllib.parse.quote(job_role)
+        formatted_role = urllib.parse.quote(effective_role)
         url = f"https://jobspresso.co/feed/?post_type=job_listing&s={formatted_role}&paged={page}"
         print(f"[*] Jobspresso: Navigating to page {page} ({url})...")
         
