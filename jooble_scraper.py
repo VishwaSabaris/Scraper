@@ -51,22 +51,32 @@ async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False,
                 print(f"[*] Page {page_idx} is beyond available suggested pages ({suggested_pages}). Stopping.")
                 break
                 
-            if loc_slug:
-                base_url = f"https://in.jooble.org/jobs-{role_slug}/{loc_slug}"
+            if "ukw" in fp or "rgns" in fp or "date" in fp or "salaryMin" in fp:
+                search_params = dict(fp)
+                if "ukw" not in search_params:
+                    search_params["ukw"] = effective_role
+                if "rgns" not in search_params and effective_loc:
+                    search_params["rgns"] = effective_loc
+                if page_idx > 1:
+                    search_params["p"] = page_idx
+                url = f"https://in.jooble.org/SearchResult?{urllib.parse.urlencode(search_params)}"
             else:
-                base_url = f"https://in.jooble.org/jobs-{role_slug}"
-                
-            query_parts = {}
-            if page_idx > 1:
-                query_parts["p"] = page_idx
-            for k in ["salary", "date", "rg", "telework"]:
-                if fp.get(k):
-                    query_parts[k] = fp[k]
+                if loc_slug:
+                    base_url = f"https://in.jooble.org/jobs-{role_slug}/{loc_slug}"
+                else:
+                    base_url = f"https://in.jooble.org/jobs-{role_slug}"
                     
-            if query_parts:
-                url = f"{base_url}?{urllib.parse.urlencode(query_parts)}"
-            else:
-                url = base_url
+                query_parts = {}
+                if page_idx > 1:
+                    query_parts["p"] = page_idx
+                for k, v in fp.items():
+                    if k not in ["role", "location"]:
+                        query_parts[k] = v
+                        
+                if query_parts:
+                    url = f"{base_url}?{urllib.parse.urlencode(query_parts)}"
+                else:
+                    url = base_url
                 
             print(f"[*] Jooble: Navigating to page {page_idx} ({url})...")
             

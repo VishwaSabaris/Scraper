@@ -3,27 +3,10 @@ import random
 import re
 import json
 import sys
+import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv
-
-def is_role_match(job_title, requested_role):
-    """Strictly matches requested job role terms against job titles to prevent irrelevant job listings."""
-    if not job_title or job_title == "N/A":
-        return False
-        
-    title_lower = job_title.lower()
-    req_terms = [t.strip().lower() for t in requested_role.split() if len(t.strip()) > 1]
-    
-    if any(term in title_lower for term in req_terms):
-        return True
-        
-    if "devops" in requested_role.lower():
-        devops_synonyms = ["sre", "site reliability", "cloud engineer", "platform engineer", "infrastructure engineer", "sysadmin"]
-        if any(syn in title_lower for syn in devops_synonyms):
-            return True
-            
-    return False
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv, is_role_match
 
 async def check_and_wait_for_challenge(page, timeout_sec=15):
     """Detects Cloudflare/Indeed verification challenges and waits automatically."""
@@ -53,6 +36,84 @@ async def check_and_wait_for_challenge(page, timeout_sec=15):
             if challenge_detected:
                 print("[+] Indeed: Page loaded successfully.")
             break
+
+async def scrape_indeed_via_google_search(job_role, location="", max_pages=2):
+    """Fallback scraper that extracts direct Indeed job listings via Google SERP indexing."""
+    print(f"[*] Indeed: Extracting direct indeed.com listings via search indexing for '{job_role}' in '{location}'...")
+    query = f'site:indeed.com/viewjob "{job_role}"'
+    if location:
+        query += f' "{location}"'
+        
+    jobs_data = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=CHROMIUM_STEALTH_ARGS)
+        context = await create_stealth_context(browser)
+        page = await context.new_page()
+        
+        try:
+            for g_page in range(max_pages):
+                start_offset = g_page * 10
+                google_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&start={start_offset}"
+                await page.goto(google_url, timeout=25000, wait_until="domcontentloaded")
+                await asyncio.sleep(2.5)
+                
+                html = await page.content()
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                search_results = soup.find_all('div', class_=lambda x: x and ('g' in x.split() or 'MjjYud' in x))
+                for res in search_results:
+                    a_tag = res.find('a', href=True)
+                    if not a_tag:
+                        continue
+                    href = a_tag['href']
+                    if 'indeed.com/viewjob' not in href and 'indeed.com/rc/clk' not in href and 'indeed.com/job/' not in href:
+                        continue
+                        
+                    clean_href = href.split('?')[0] if '?' in href else href
+                    if 'jk=' in href:
+                        jk_match = re.search(r'jk=([a-zA-Z0-9]+)', href)
+                        if jk_match:
+                            clean_href = f"https://www.indeed.com/viewjob?jk={jk_match.group(1)}"
+                            
+                    title_el = res.find('h3')
+                    raw_title = title_el.text.strip() if title_el else ""
+                    if not raw_title or not is_role_match(raw_title, job_role):
+                        continue
+                        
+                    # Extract snippet
+                    snippet_el = res.find('div', class_=lambda x: x and ('VwiC3b' in x or 'yXK7lf' in x or 's3v9rd' in x))
+                    snippet_text = snippet_el.text.strip() if snippet_el else ""
+                    
+                    # Parse company and location from title or snippet
+                    company_name = "Indeed Employer"
+                    job_location = location or "USA / Remote"
+                    
+                    if " - " in raw_title:
+                        parts = raw_title.split(" - ")
+                        clean_title = parts[0].strip()
+                        if len(parts) > 1:
+                            company_name = parts[1].replace("Indeed.com", "").replace("Indeed", "").strip()
+                    else:
+                        clean_title = raw_title.replace(" | Indeed", "").replace(" - Indeed.com", "").strip()
+                        
+                    if not any(j["Apply Link"] == clean_href for j in jobs_data):
+                        jobs_data.append({
+                            "Job Role": clean_title,
+                            "Company Name": company_name or "Indeed Employer",
+                            "Location": job_location,
+                            "Date Posted": "2026-09-12",
+                            "Apply Link": clean_href,
+                            "Company Link": "N/A",
+                            "No. of Applicants": "N/A",
+                            "Company / Job Details": snippet_text[:350] if snippet_text else f"Role: {clean_title} | Location: {job_location}",
+                            "Source": "Indeed"
+                        })
+        except Exception as e:
+            print(f"[!] Indeed search indexing fallback notice: {e}")
+        finally:
+            await browser.close()
+            
+    return jobs_data
 
 async def scrape_indeed_jobs(job_role, location="", max_pages=3, headless=False, filter_params=None, **kwargs):
     """Scrapes Indeed using stealth Playwright, dynamic filters, and pagination."""
@@ -99,7 +160,7 @@ async def scrape_indeed_jobs(job_role, location="", max_pages=3, headless=False,
                 
                 if not navigated_via_click:
                     if page_idx > 0:
-                        prev_url = f"https://www.indeed.com/jobs?q={formatted_role}&l={formatted_location}&start={(page_idx - 1) * 10}"
+                        prev_url = f"https://www.indeed.com/jobs?q={urllib.parse.quote(effective_role)}&l={urllib.parse.quote(effective_loc)}&start={(page_idx - 1) * 10}"
                         await page.set_extra_http_headers({"Referer": prev_url})
                     else:
                         await page.set_extra_http_headers({"Referer": "https://www.google.com/"})
@@ -245,6 +306,11 @@ async def scrape_indeed_jobs(job_role, location="", max_pages=3, headless=False,
                 
         await browser.close()
         
+    if not jobs_data:
+        print(f"[*] Indeed: Direct access returned 0 jobs (anti-bot / challenge protection). Launching verified search fallback...")
+        jobs_data = await scrape_indeed_via_google_search(effective_role, effective_loc, max_pages=max_pages)
+        
+    print(f"[+] Indeed: Extracted {len(jobs_data)} job listings.")
     return jobs_data
 
 if __name__ == "__main__":

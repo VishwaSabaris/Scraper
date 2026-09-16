@@ -4,12 +4,12 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
     Scrapes job listings from builtin.com using SSR HTML card extraction.
-    Supports dynamic filter parameters and deep pagination.
+    Supports dynamic filter parameters, subpaths (/jobs/office, /jobs/remote, /jobs/hybrid), and deep pagination.
     """
     fp = filter_params or {}
     effective_role = fp.get("search") or job_role
@@ -33,11 +33,14 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
         }
         if effective_loc:
             params["location"] = effective_loc
-        for k in ["remote", "experience", "days_since_updated", "category", "company_size"]:
+            
+        for k in ["country", "allLocations", "remote", "experience", "days_since_updated", "category", "company_size"]:
             if fp.get(k):
                 params[k] = fp[k]
                 
-        url = f"https://builtin.com/jobs?{urllib.parse.urlencode(params)}"
+        workplace_path = fp.get("workplace_path", "")
+        subpath = f"/{workplace_path}" if workplace_path else ""
+        url = f"https://builtin.com/jobs{subpath}?{urllib.parse.urlencode(params)}"
         print(f"[*] BuiltIn: Navigating to page {page} ({url})...")
         
         try:
@@ -54,7 +57,7 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
                 break
                 
             soup = BeautifulSoup(res.text, "html.parser")
-            cards = soup.select("[data-id='job-card'], .job-item, .job-card, [id^='job-card-']")
+            cards = soup.select("[data-id='job-card'], .job-item, .job-card, [id^='job-card-'], div.card")
             print(f"[+] BuiltIn: Found {len(cards)} job card elements on page {page}.")
             
             if not cards:
@@ -67,15 +70,20 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
                     continue
                     
                 title = title_el.text.strip()
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 apply_link = title_el.get("href", "") if title_el.name == "a" else (title_el.find("a").get("href") if title_el.find("a") else "")
                 if apply_link and not apply_link.startswith("http"):
                     apply_link = "https://builtin.com" + apply_link
                     
-                comp_el = card.select_one("[data-id='company-title'], .company-title, [class*='companyTitle'], [class*='company-name']")
+                comp_el = card.select_one("[data-id='company-title'], .company-title, [class*='companyTitle'], [class*='company-name'], a[href*='/company/']")
                 company = comp_el.text.strip() if comp_el else "BuiltIn Employer"
+                
+                comp_url = "N/A"
+                if comp_el and comp_el.name == "a" and comp_el.get("href"):
+                    comp_href = comp_el.get("href")
+                    comp_url = f"https://builtin.com{comp_href}" if comp_href.startswith("/") else comp_href
                 
                 loc_el = card.select_one("[data-id='location'], .location, [class*='location']")
                 job_location = loc_el.text.strip() if loc_el else (location or "USA / Remote")
@@ -85,6 +93,7 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
                 
                 date_el = card.select_one("[data-id='posted-date'], time, [class*='date']")
                 date_posted = date_el.text.strip() if date_el else "Recent"
+                date_posted = normalize_date_posted(date_posted)
                 
                 desc_el = card.select_one("[data-id='description'], .description, p")
                 desc = desc_el.text.strip() if desc_el else ""
@@ -98,7 +107,7 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
                         "Location": job_location,
                         "Date Posted": date_posted,
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
+                        "Company Link": comp_url,
                         "No. of Applicants": "N/A",
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "BuiltIn"
@@ -125,7 +134,7 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python"
+        role = "Sales Development Representative"
         loc = ""
         
     results = asyncio.run(scrape_builtin_jobs(role, loc, max_pages=1))

@@ -56,9 +56,9 @@ async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=Fals
         base_url = f"https://www.jobleads.com/{country_code}/jobs/q/{encoded_role}"
 
     extra_q = {}
-    for k in ["posted", "salary", "workSetting", "exp"]:
-        if fp.get(k):
-            extra_q[k] = fp[k]
+    for k, v in fp.items():
+        if k not in ["role", "location", "q"]:
+            extra_q[k] = v
     if extra_q:
         url = f"{base_url}?{urllib.parse.urlencode(extra_q)}"
     else:

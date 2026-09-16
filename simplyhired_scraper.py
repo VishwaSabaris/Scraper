@@ -4,7 +4,7 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_simplyhired_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -33,7 +33,7 @@ async def scrape_simplyhired_jobs(job_role, location="", max_pages=1, filter_par
         }
         if effective_loc:
             params["l"] = effective_loc
-        for k in ["fdb", "fjt", "fmi", "fworkplace"]:
+        for k in ["jt", "mip", "t", "fdb", "fjt", "fmi", "fworkplace"]:
             if fp.get(k):
                 params[k] = fp[k]
                 
@@ -67,7 +67,7 @@ async def scrape_simplyhired_jobs(job_role, location="", max_pages=1, filter_par
                     continue
                     
                 title = title_el.text.strip()
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 link_el = card.select_one("a[href*='/job/']") or title_el if title_el.name == "a" else title_el.find("a")
@@ -87,6 +87,10 @@ async def scrape_simplyhired_jobs(job_role, location="", max_pages=1, filter_par
                 desc_el = card.select_one("[data-testid='searchSerpJobSnippet'], p")
                 desc = desc_el.text.strip() if desc_el else ""
                 
+                date_el = card.select_one("[data-testid='searchSerpJobDatePosted'], time, span.chakra-badge, [class*='date']")
+                date_posted = date_el.text.strip() if date_el else "Recent"
+                date_posted = normalize_date_posted(date_posted)
+                
                 details = f"Company: {company} | Location: {job_location} | Salary: {salary} | {desc}"
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
@@ -94,7 +98,7 @@ async def scrape_simplyhired_jobs(job_role, location="", max_pages=1, filter_par
                         "Job Role": title,
                         "Company Name": company,
                         "Location": job_location,
-                        "Date Posted": "Recent",
+                        "Date Posted": date_posted,
                         "Apply Link": apply_link,
                         "Company Link": "N/A",
                         "No. of Applicants": "N/A",
@@ -123,7 +127,7 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python Developer"
+        role = "Sales Development Representative"
         loc = "Bengaluru"
         
     results = asyncio.run(scrape_simplyhired_jobs(role, loc, max_pages=1))

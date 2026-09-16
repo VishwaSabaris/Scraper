@@ -4,7 +4,7 @@ import sys
 import json
 import urllib.parse
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -12,8 +12,8 @@ async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=No
     Supports dynamic filter parameters and deep pagination.
     """
     fp = filter_params or {}
-    effective_role = fp.get("q") or job_role
-    effective_loc = fp.get("loc") or location or ""
+    effective_role = fp.get("qActual") or fp.get("q") or job_role
+    effective_loc = fp.get("loc") or fp.get("location") or location or ""
     
     print(f"[*] Shine: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
@@ -34,7 +34,7 @@ async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=No
         }
         if effective_loc:
             params["loc"] = effective_loc
-        for k in ["exp", "salary", "posted_date", "work_mode", "functional_area", "industry", "sort"]:
+        for k in ["fexp", "exp", "fsalary", "salary", "posted_date", "work_mode", "functional_area", "industry", "emp_type", "sort"]:
             if fp.get(k):
                 params[k] = fp[k]
                 
@@ -66,7 +66,7 @@ async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=No
                 title = item.get("jJT") or item.get("title") or ""
                 title = title.strip()
                 
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 company = item.get("jCName") or item.get("company_name") or "Shine Recruiter"
@@ -84,12 +84,13 @@ async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=No
                     apply_link = f"https://www.shine.com/jobs/{slug}"
                 else:
                     job_id = item.get("id") or item.get("doc_id")
-                    apply_link = f"https://www.shine.com/jobs/detail/{job_id}" if job_id else f"https://www.shine.com/job-search/{q_param}-jobs"
+                    apply_link = f"https://www.shine.com/jobs/detail/{job_id}" if job_id else f"https://www.shine.com/job-search/{urllib.parse.quote(effective_role)}-jobs"
                     
                 # Salary & Experience
                 salary = item.get("jSal") or item.get("salary_details") or "Not disclosed"
                 exp = item.get("jExp") or item.get("exp_details") or "N/A"
                 posted_date = item.get("jPDate") or "Recent"
+                posted_date = normalize_date_posted(str(posted_date))
                 
                 # Applicants
                 applicants = item.get("jACnt", "N/A")
@@ -133,7 +134,7 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python"
+        role = "Sales Development Representative"
         loc = "Bangalore"
         
     results = asyncio.run(scrape_shine_jobs(role, loc, max_pages=1))

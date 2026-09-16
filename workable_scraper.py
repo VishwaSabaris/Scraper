@@ -3,7 +3,7 @@ import sys
 import re
 import requests
 from bs4 import BeautifulSoup
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 from request_client import execute_request
 
 def clean_html(raw_html):
@@ -43,7 +43,7 @@ def scrape_workable_jobs(job_role, location="", max_jobs=50, filter_params=None,
             params["location"] = effective_loc
         if page_token:
             params["pageToken"] = page_token
-        for k in ["workplace", "employment_type", "department"]:
+        for k in ["workplace", "employment_type", "department", "experience", "day_range"]:
             if fp.get(k):
                 params[k] = fp[k]
             
@@ -62,7 +62,7 @@ def scrape_workable_jobs(job_role, location="", max_jobs=50, filter_params=None,
                 title = item.get("title", "N/A")
                 
                 # Role matching filter
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 comp_info = item.get("company", {})
@@ -82,6 +82,7 @@ def scrape_workable_jobs(job_role, location="", max_jobs=50, filter_params=None,
                 created_date = item.get("created", "N/A")
                 if created_date and "T" in str(created_date):
                     created_date = str(created_date).split("T")[0]
+                created_date = normalize_date_posted(str(created_date))
                     
                 apply_link = item.get("url", "N/A")
                 
@@ -128,8 +129,8 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = input("Enter Job Role (e.g., Python Developer): ").strip()
-        loc = input("Enter Location (e.g., Remote): ").strip()
+        role = "Sales Development Representative"
+        loc = "Bengaluru, Karnataka, India"
         
     results = scrape_workable_jobs(role, loc)
     print(f"\n[+] Workable Scraper finished. Total results: {len(results)}")

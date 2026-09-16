@@ -5,7 +5,7 @@ import json
 import urllib3
 import urllib.parse
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 urllib3.disable_warnings()
 
@@ -39,9 +39,11 @@ async def scrape_timesjobs_jobs(job_role, location="", max_pages=5, page_size=50
             "page": page,
             "size": page_size
         }
-        for k in ["cboWorkExp1", "cboWorkExp2", "postDate", "workMode", "function", "industry"]:
+        for k in ["cboWorkExp1", "cboWorkExp2", "experience", "postDate", "workMode", "function", "industry"]:
             if fp.get(k):
                 payload[k] = fp[k]
+        if "experience" in fp and "cboWorkExp1" not in payload:
+            payload["cboWorkExp1"] = fp["experience"]
                 
         print(f"[*] TimesJobs: Querying page {page} with keywords '{effective_keywords}' (size {page_size})...")
         
@@ -105,6 +107,8 @@ async def scrape_timesjobs_jobs(job_role, location="", max_pages=5, page_size=50
                 exp = f"{exp_from}-{exp_to} yrs" if (exp_from or exp_to) else "N/A"
                 
                 post_date = item.get("postDate") or "Recent"
+                post_date = normalize_date_posted(str(post_date))
+                
                 app_cnt = item.get("applicationCount", "N/A")
                 applicants_str = str(app_cnt) if app_cnt is not None else "N/A"
                 
@@ -144,7 +148,7 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python Developer"
+        role = "Sales Development Representative"
         loc = "Bangalore"
         
     results = asyncio.run(scrape_timesjobs_jobs(role, loc, max_pages=3))

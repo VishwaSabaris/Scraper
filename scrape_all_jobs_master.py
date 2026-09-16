@@ -72,6 +72,7 @@ from jobleads_scraper import scrape_jobleads_jobs
 from remote_scraper import scrape_remote_jobs
 from wellfound_scraper import scrape_wellfound_jobs
 from workable_scraper import scrape_workable_jobs
+from workatastartup_scraper import scrape_workatastartup_jobs
 from ziprecruiter_scraper import scrape_ziprecruiter_jobs
 from jobspresso_scraper import scrape_jobspresso_jobs
 from utils import save_to_csv
@@ -246,6 +247,13 @@ PORTAL_REGISTRY: Dict[str, Dict[str, Any]] = {
         "region": "Global",
         "speed": "Fast (API)"
     },
+    "workatastartup": {
+        "name": "Work at a Startup (YC)",
+        "func": scrape_workatastartup_jobs,
+        "is_async": True,
+        "region": "Startups / Global",
+        "speed": "Browser (Persistent)"
+    },
     "ziprecruiter": {
         "name": "ZipRecruiter",
         "func": scrape_ziprecruiter_jobs,
@@ -263,7 +271,7 @@ PORTAL_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 INDIAN_PORTALS = ["foundit", "apna", "instahyre", "internshala", "shine", "adzuna", "timesjobs", "freshersworld", "naukri", "jooble"]
-GLOBAL_PORTALS = ["linkedin", "indeed", "glassdoor", "careerjet", "dice", "simplyhired", "builtin", "reed", "himalayas", "jobleads", "remote_co", "wellfound", "workable", "ziprecruiter", "careerbuilder", "jobspresso"]
+GLOBAL_PORTALS = ["linkedin", "indeed", "glassdoor", "careerjet", "dice", "simplyhired", "builtin", "reed", "himalayas", "jobleads", "remote_co", "wellfound", "workable", "workatastartup", "ziprecruiter", "careerbuilder", "jobspresso"]
 
 
 def prompt_user_filters() -> UniversalJobFilter:
@@ -428,12 +436,11 @@ async def execute_portal_scraper(pkey: str, pinfo: Dict[str, Any], uf: Universal
     
     try:
         if is_async:
-            results = await func(effective_role, effective_loc, max_pages=max_pages, filter_params=portal_params)
+            results = await func(effective_role, effective_loc, max_pages=max_pages, filter_params=portal_params, headless=True)
         else:
             # Synchronous function wrapper
             results = await asyncio.to_thread(func, effective_role, effective_loc, max_jobs=max_pages * 25, filter_params=portal_params)
 
-        print(f"[+] [{pname}] Completed: Extracted {len(results)} job listings.")
         return results
     except Exception as err:
         print(f"[!] [{pname}] Scraper encountered an error: {err}")
@@ -449,23 +456,34 @@ async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, 
     all_scraped_jobs = []
     portal_counts = {}
 
-    for pkey in target_portals:
+    for idx, pkey in enumerate(target_portals, 1):
         if pkey not in PORTAL_REGISTRY:
             print(f"[!] Unknown portal key: '{pkey}'. Skipping.")
             continue
 
         pinfo = PORTAL_REGISTRY[pkey]
         jobs = await execute_portal_scraper(pkey, pinfo, uf, max_pages)
-        portal_counts[pinfo["name"]] = len(jobs)
+        portal_counts[pinfo["name"]] = {
+            "count": len(jobs),
+            "region": pinfo.get("region", "Global"),
+            "status": "[OK] COMPLETED" if len(jobs) > 0 else "[--] ZERO LISTINGS"
+        }
         all_scraped_jobs.extend(jobs)
 
-    print("\n" + "=" * 60)
-    print("              FINAL SCRAPING RESULTS SUMMARY")
-    print("=" * 60)
-    for pname, count in portal_counts.items():
-        print(f"  * {pname:<30}: {count:>5} jobs")
-    print("-" * 60)
-    print(f"  * TOTAL RAW LISTINGS SCRAPED : {len(all_scraped_jobs):>5} jobs")
+    # ─────────────────────────────────────────────────────────────
+    # ELEGANT DETERMINISTIC TERMINAL SUMMARY TABLE
+    # ─────────────────────────────────────────────────────────────
+    print("\n" + "=" * 88)
+    print("                    UNIVERSAL JOB SCRAPING RESULTS SUMMARY")
+    print("=" * 88)
+    print(f" {'#':<3} {'Portal Name':<28} {'Region / Scope':<22} {'Status':<16} {'Jobs Scraped':>12}")
+    print("-" * 88)
+    
+    for idx, (pname, stats) in enumerate(portal_counts.items(), 1):
+        print(f" {idx:<3} {pname:<28} {stats['region']:<22} {stats['status']:<16} {stats['count']:>12}")
+        
+    print("-" * 88)
+    print(f"  * TOTAL RAW LISTINGS SCRAPED     : {len(all_scraped_jobs):>6} jobs")
 
     # Deduplication based on Apply Link / Role + Company
     seen_keys = set()
@@ -480,12 +498,28 @@ async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, 
             seen_keys.add(dedup_key)
             unique_jobs.append(job)
 
-    print(f"  * TOTAL UNIQUE CLEAN LISTINGS : {len(unique_jobs):>5} jobs")
-    print("=" * 60 + "\n")
+    print(f"  * TOTAL UNIQUE DEDUPLICATED JOBS : {len(unique_jobs):>6} jobs")
+    print("=" * 88 + "\n")
 
     if unique_jobs:
         save_to_csv(unique_jobs, output_file)
-        print(f"[++++] Success! Saved {len(unique_jobs)} verified job records to '{output_file}'\n")
+        print(f"[++++] Success! Saved {len(unique_jobs)} verified job records to '{output_file}'")
+        
+        # 1. Automatic Job Description Enrichment
+        print(f"\n[*] Launching Universal Job Description Enricher for '{output_file}'...")
+        try:
+            from enrich_job_descriptions import enrich_job_csv
+            enrich_job_csv(output_file)
+        except Exception as e:
+            print(f"[!] Job description enrichment notice: {e}")
+
+        # 2. Automatic Company Website Resolution & Date Normalization
+        print(f"\n[*] Launching Company Website Finder for '{output_file}'...")
+        try:
+            from resolve_company_websites import process_job_csv
+            process_job_csv(output_file)
+        except Exception as e:
+            print(f"[!] Company Website resolution notice: {e}")
     else:
         print("[-] No matching job records were extracted to save.")
 

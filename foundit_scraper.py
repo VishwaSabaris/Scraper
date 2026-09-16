@@ -13,7 +13,7 @@ async def scrape_foundit_jobs(job_role, location="", max_pages=1, limit_per_page
     """
     fp = filter_params or {}
     effective_role = fp.get("query") or job_role
-    effective_loc = fp.get("locations") or location or ""
+    effective_loc = fp.get("locations") or fp.get("location") or location or ""
     
     print(f"[*] Foundit: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
@@ -37,9 +37,10 @@ async def scrape_foundit_jobs(job_role, location="", max_pages=1, limit_per_page
             "locations": effective_loc,
             "limit": limit_per_page,
             "start": start_offset,
-            "sort": fp.get("sort", "1")
+            "sort": fp.get("sort", "1"),
+            "queryDerived": "true"
         }
-        for k in ["experienceRanges", "salaryRanges", "postedDate", "workMode", "jobTypes", "industries", "functions", "companyTypes", "employerTypes"]:
+        for k in ["experienceRanges", "salaryRanges", "postedDate", "jobFreshness", "workMode", "jobTypes", "industries", "functions", "companyTypes", "employerTypes", "postedBy"]:
             if fp.get(k):
                 params[k] = fp[k]
                 
@@ -69,7 +70,7 @@ async def scrape_foundit_jobs(job_role, location="", max_pages=1, limit_per_page
             added_on_page = 0
             for item in job_list:
                 title = item.get("title", "").strip()
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 # Extract company
@@ -167,8 +168,8 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = sys.argv[2]
     else:
-        role = input("Enter Job Role: ").strip() or "Python Developer"
-        loc = input("Enter Location: ").strip() or "Bangalore"
+        role = "Sales Development Representative"
+        loc = "Bengaluru"
         
     results = asyncio.run(scrape_foundit_jobs(role, loc, max_pages=1))
     print(f"\n[+] Scraper finished. Found {len(results)} jobs.")

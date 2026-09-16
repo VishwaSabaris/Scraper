@@ -32,9 +32,9 @@ async def scrape_reed_jobs(job_role, location="", max_pages=None, strict_role_ma
     query_params = {'keywords': effective_role.strip()}
     if effective_loc and effective_loc.strip():
         query_params['location'] = effective_loc.strip()
-    for k in ["salarymin", "salarymax", "hidesalaryjobs", "fulltime", "parttime", "permanent", "contract", "temp", "workfromhome", "hybrid", "distance", "datecreatedoffset"]:
-        if fp.get(k):
-            query_params[k] = fp[k]
+    for k, v in fp.items():
+        if k not in ["role", "location", "keywords"]:
+            query_params[k] = v
 
     base_url = "https://www.reed.co.uk/jobs?" + urllib.parse.urlencode(query_params)
     print(f"[*] Reed.co.uk: Navigating to search URL: {base_url}")

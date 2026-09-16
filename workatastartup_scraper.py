@@ -212,20 +212,29 @@ def parse_workatastartup_html(html_content, job_role_filter=""):
                 
     return results
 
-async def scrape_workatastartup_jobs(target_url=None, job_role="", location="", industry="", company_size="", min_experience="", max_scrolls=20, headless=False):
+async def scrape_workatastartup_jobs(target_url=None, job_role="", location="", industry="", company_size="", min_experience="", max_scrolls=20, headless=False, filter_params=None, interactive=False, **kwargs):
     """
     Scrapes Y Combinator's Work at a Startup job listings.
-    Supports direct URLs or custom parameters (job_role, location).
+    Supports direct URLs, custom parameters (job_role, location), and universal filter parameters.
     Saves session cookies in ./workatastartup_session for authenticated access.
     """
-    url = build_workatastartup_url(
-        job_role=job_role,
-        location=location,
-        industry=industry,
-        company_size=company_size,
-        min_experience=min_experience,
-        custom_url=target_url
-    )
+    fp = filter_params or {}
+    effective_role = fp.get("query") or job_role
+    effective_loc = fp.get("locations") or fp.get("location") or location or ""
+    
+    if target_url and target_url.strip().startswith("http"):
+        url = target_url.strip()
+    elif fp:
+        # Build direct query string from filter params
+        url = f"https://www.workatastartup.com/companies?{urllib.parse.urlencode(fp)}"
+    else:
+        url = build_workatastartup_url(
+            job_role=effective_role,
+            location=effective_loc,
+            industry=industry,
+            company_size=company_size,
+            min_experience=min_experience
+        )
         
     print(f"[*] Work at a Startup (YC): Navigating to target URL...\n    {url}")
     
@@ -257,26 +266,21 @@ async def scrape_workatastartup_jobs(target_url=None, job_role="", location="", 
             await page.goto(url, wait_until="domcontentloaded", timeout=40000)
             await asyncio.sleep(4)
             
-            # ALWAYS pause up to 3 minutes when running in non-headless interactive mode
-            if not headless:
+            # Interactive login prompt only if explicitly enabled and stdin is interactive
+            if interactive and not headless and sys.stdin and sys.stdin.isatty():
                 print("\n" + "=" * 65)
-                print(" [!] BROWSER WINDOW IS OPEN - 3-MINUTE LOGIN & SEARCH WINDOW")
+                print(" [!] BROWSER WINDOW IS OPEN - LOGIN & SEARCH WINDOW")
                 print("=" * 65)
                 print(" 1. Please LOG IN to Work at a Startup in the opened browser window if not already logged in.")
                 print(" 2. Your login session is saved in ./workatastartup_session for all future runs.")
                 print(" 3. Once logged in and viewing search results, press ENTER below to start extracting all matching jobs.")
                 print("=" * 65)
-                print("[*] Waiting up to 3 minutes for login...")
-                
                 try:
                     loop = asyncio.get_event_loop()
                     await asyncio.wait_for(
                         loop.run_in_executor(None, input, " -> Press ENTER once you are logged in and viewing results: "),
-                        timeout=180
+                        timeout=30
                     )
-                    print("[*] User pressed ENTER. Starting extraction now...")
-                except asyncio.TimeoutError:
-                    print("\n[*] 3-minute login window finished. Starting extraction now...")
                 except Exception:
                     pass
                     

@@ -4,12 +4,12 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, STEALTH_JS_INIT, save_to_csv, is_role_match
+from utils import CHROMIUM_STEALTH_ARGS, STEALTH_JS_INIT, save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=True, filter_params=None, **kwargs):
     """
     Scrapes job listings from careerjet.co.in using Playwright persistent context.
-    Supports dynamic filter parameters and deep pagination.
+    Supports dynamic filter parameters (nw, cp, ct, etc.) and deep pagination.
     """
     fp = filter_params or {}
     effective_role = fp.get("s") or job_role
@@ -56,11 +56,11 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                 }
                 if effective_loc:
                     params["l"] = effective_loc
-                for k in ["radius", "sort", "f"]:
+                for k in ["nw", "cp", "ct", "radius", "sort", "f"]:
                     if fp.get(k):
                         params[k] = fp[k]
                         
-                url = f"https://www.careerjet.co.in/search/jobs?{urllib.parse.urlencode(params)}"
+                url = f"https://www.careerjet.co.in/jobs?{urllib.parse.urlencode(params)}"
                 print(f"[*] Careerjet: Navigating to page {page_idx} ({url})...")
                 
                 try:
@@ -78,30 +78,7 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                     print(f"[+] Careerjet: Found {len(cards)} card elements on page {page_idx}.")
                     
                     if not cards:
-                        # Try page.evaluate fallback
-                        js_cards = await page.evaluate('''() => {
-                            const res = [];
-                            document.querySelectorAll('article.job, article, .job').forEach(a => {
-                                const h2 = a.querySelector('header h2 a, h2 a, a.title, h2');
-                                const comp = a.querySelector('.company_compact, .company, p.company');
-                                const loc = a.querySelector('.location_compact, .locations, ul.location');
-                                const sal = a.querySelector('.salary, ul.salary');
-                                const desc = a.querySelector('.desc, .job-description');
-                                if (h2) {
-                                    res.push({
-                                        title: h2.innerText.trim(),
-                                        link: h2.href || (h2.tagName === 'A' ? h2.href : ''),
-                                        company: comp ? comp.innerText.trim() : 'Careerjet Employer',
-                                        loc: loc ? loc.innerText.trim() : 'India',
-                                        sal: sal ? sal.innerText.trim() : 'Not disclosed',
-                                        desc: desc ? desc.innerText.trim() : ''
-                                    });
-                                }
-                            });
-                            return res;
-                        }''')
-                        if js_cards:
-                            print(f"[+] Careerjet: JS evaluation found {len(js_cards)} cards.")
+                        break
                             
                     added_on_page = 0
                     for card in cards:
@@ -110,15 +87,20 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                             continue
                             
                         title = title_el.text.strip()
-                        if not is_role_match(title, job_role):
+                        if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                             continue
                             
                         apply_link = title_el.get("href", "") if title_el.name == "a" else (title_el.find("a").get("href") if title_el.find("a") else "")
                         if apply_link and not apply_link.startswith("http"):
                             apply_link = "https://www.careerjet.co.in" + apply_link
                             
-                        comp_el = card.select_one(".company_compact, .company, p.company")
+                        comp_el = card.select_one(".company_compact, .company, p.company, a[href*='/company/']")
                         company = comp_el.text.strip() if comp_el else "Careerjet Employer"
+                        
+                        comp_url = "N/A"
+                        if comp_el and comp_el.name == "a" and comp_el.get("href"):
+                            comp_href = comp_el.get("href")
+                            comp_url = f"https://www.careerjet.co.in{comp_href}" if comp_href.startswith("/") else comp_href
                         
                         loc_el = card.select_one(".location_compact, .locations, ul.location")
                         job_location = loc_el.text.strip() if loc_el else (location or "India")
@@ -126,8 +108,12 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                         sal_el = card.select_one(".salary, ul.salary")
                         salary = sal_el.text.strip() if sal_el else "Not disclosed"
                         
-                        desc_el = card.select_one(".desc, .job-description")
+                        desc_el = card.select_one(".desc, .job-description, p")
                         desc = desc_el.text.strip() if desc_el else ""
+                        
+                        date_el = card.select_one(".badge_date, .date, time, span.badge")
+                        date_posted = date_el.text.strip() if date_el else "Recent"
+                        date_posted = normalize_date_posted(date_posted)
                         
                         details = f"Company: {company} | Location: {job_location} | Salary: {salary} | {desc}"
                         
@@ -136,9 +122,9 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                                 "Job Role": title,
                                 "Company Name": company,
                                 "Location": job_location,
-                                "Date Posted": "Recent",
+                                "Date Posted": date_posted,
                                 "Apply Link": apply_link,
-                                "Company Link": "N/A",
+                                "Company Link": comp_url,
                                 "No. of Applicants": "N/A",
                                 "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                                 "Source": "Careerjet"
@@ -149,12 +135,12 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                     if added_on_page == 0:
                         break
                         
-                except Exception as page_err:
-                    print(f"[!] Careerjet: Error on page {page_idx}: {page_err}")
+                    await asyncio.sleep(2)
+                    
+                except Exception as err:
+                    print(f"[!] Careerjet: Error on page {page_idx}: {err}")
                     break
                     
-        except Exception as run_err:
-            print(f"[!] Careerjet execution error: {run_err}")
         finally:
             await context.close()
             
@@ -168,9 +154,9 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python Developer"
+        role = "Sales Development Representative"
         loc = "Bangalore"
         
-    results = asyncio.run(scrape_careerjet_jobs(role, loc, max_pages=1, headless=True))
+    results = asyncio.run(scrape_careerjet_jobs(role, loc, max_pages=1))
     print(f"\n[+] Scraper finished. Found {len(results)} jobs.")
     save_to_csv(results, "careerjet_jobs.csv")

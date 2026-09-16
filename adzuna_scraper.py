@@ -1,10 +1,11 @@
 import asyncio
 import os
 import sys
+import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_adzuna_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -13,7 +14,7 @@ async def scrape_adzuna_jobs(job_role, location="", max_pages=1, filter_params=N
     """
     fp = filter_params or {}
     effective_role = fp.get("q") or job_role
-    effective_loc = fp.get("w") or location or ""
+    effective_loc = fp.get("w") or fp.get("loc") or location or ""
     
     print(f"[*] Adzuna: Fetching job listings for '{effective_role}' in '{effective_loc or 'India'}'...")
     
@@ -33,9 +34,11 @@ async def scrape_adzuna_jobs(job_role, location="", max_pages=1, filter_params=N
         }
         if effective_loc:
             params["w"] = effective_loc
-        for k in ["distance", "salary_min", "salary_max", "contract_type", "working_hours", "category", "sort_by"]:
+        for k in ["cty", "date_posted", "f", "distance", "salary_min", "salary_max", "contract_type", "working_hours", "category", "sort_by"]:
             if fp.get(k):
                 params[k] = fp[k]
+        if fp.get("loc") and str(fp.get("loc")).isdigit():
+            params["loc"] = fp["loc"]
                 
         url = f"https://www.adzuna.in/search?{urllib.parse.urlencode(params)}"
         print(f"[*] Adzuna: Navigating to page {page} ({url})...")
@@ -67,15 +70,20 @@ async def scrape_adzuna_jobs(job_role, location="", max_pages=1, filter_params=N
                     continue
                     
                 title = title_el.text.strip()
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 apply_link = title_el.get("href", "") if title_el.name == "a" else (title_el.find("a").get("href") if title_el.find("a") else "")
                 if apply_link and not apply_link.startswith("http"):
                     apply_link = "https://www.adzuna.in" + apply_link
                     
-                comp_el = card.select_one(".ui-company, [data-qa='company-name'], .text-neutral-500, .company")
+                comp_el = card.select_one(".ui-company, [data-qa='company-name'], .text-neutral-500, .company, a[href*='/company/']")
                 company = comp_el.text.strip() if comp_el else "Adzuna Employer"
+                
+                comp_url = "N/A"
+                if comp_el and comp_el.name == "a" and comp_el.get("href"):
+                    comp_href = comp_el.get("href")
+                    comp_url = f"https://www.adzuna.in{comp_href}" if comp_href.startswith("/") else comp_href
                 
                 loc_el = card.select_one(".ui-location, .location, [data-qa='location']")
                 job_location = loc_el.text.strip() if loc_el else (location or "India")
@@ -86,8 +94,9 @@ async def scrape_adzuna_jobs(job_role, location="", max_pages=1, filter_params=N
                 desc_el = card.select_one(".ui-snippet, .snippet, p")
                 desc = desc_el.text.strip() if desc_el else ""
                 
-                date_el = card.select_one(".ui-date, .date, time")
+                date_el = card.select_one(".ui-date, .date, time, span.text-sm.text-neutral-400")
                 date_posted = date_el.text.strip() if date_el else "Recent"
+                date_posted = normalize_date_posted(date_posted)
                 
                 details = f"Company: {company} | Location: {job_location} | Salary: {salary} | {desc}"
                 
@@ -98,7 +107,7 @@ async def scrape_adzuna_jobs(job_role, location="", max_pages=1, filter_params=N
                         "Location": job_location,
                         "Date Posted": date_posted,
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
+                        "Company Link": comp_url,
                         "No. of Applicants": "N/A",
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "Adzuna"
@@ -125,7 +134,7 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python"
+        role = "Sales Development Representative"
         loc = "Bangalore"
         
     results = asyncio.run(scrape_adzuna_jobs(role, loc, max_pages=1))

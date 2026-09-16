@@ -7,6 +7,7 @@ URL query parameters and API payloads across all 26 supported job portals.
 Dynamically:
 - Evaluates which filters are supported per portal.
 - Adapts and formats supported filters to exact portal specs.
+- Builds full, high-fidelity web search URLs matching live portal filter schemas.
 - Safely omits unsupported filters per portal to prevent query corruption.
 - Provides transparent logging of applied vs. omitted filters.
 """
@@ -14,6 +15,7 @@ Dynamically:
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple
 import urllib.parse
+import re
 
 @dataclass
 class UniversalJobFilter:
@@ -88,23 +90,23 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
         "top_employers", "employer_type", "job_type", "walk_in_date", "international_jobs", "sort_by", "work_mode"
     ],
     "apna": [
-        "keywords", "location", "date_posted_days", "salary_min", "work_mode", "job_type",
+        "keywords", "job_title", "location", "date_posted_days", "salary_min", "work_mode", "job_type",
         "work_shift", "department", "sort_by", "experience_min"
     ],
     "instahyre": [
         "keywords", "job_title", "location", "experience_min", "experience_max", "salary_min",
-        "job_type", "work_mode", "skills", "company", "industry", "date_posted_days", "education", "sort_by", "company_type"
+        "job_type", "work_mode", "skills", "company", "industry", "date_posted_days", "education", "sort_by", "company_type", "company_size"
     ],
     "internshala": [
-        "keywords", "location", "work_mode", "job_type", "category", "stipend_min",
-        "experience_min", "skills", "duration_months", "date_posted_days", "company", "sort_by"
+        "keywords", "job_title", "location", "work_mode", "job_type", "category", "stipend_min",
+        "experience_min", "skills", "duration_months", "date_posted_days", "company", "salary_min", "sort_by"
     ],
     "shine": [
         "keywords", "job_title", "location", "experience_min", "salary_min", "industry",
-        "department", "job_type", "work_mode", "education", "skills", "company", "date_posted_days", "sort_by"
+        "department", "job_type", "work_mode", "education", "skills", "company", "date_posted_days", "sort_by", "employer_type"
     ],
     "adzuna": [
-        "keywords", "location", "salary_min", "salary_max", "date_posted_days", "job_type",
+        "keywords", "job_title", "location", "salary_min", "salary_max", "date_posted_days", "job_type",
         "work_mode", "category", "industry", "company", "distance_km", "sort_by"
     ],
     "builtin": [
@@ -117,7 +119,7 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
     ],
     "dice": [
         "job_title", "skills", "company", "keywords", "location", "easy_apply", "date_posted_days",
-        "work_mode", "job_type", "distance_km", "experience_level", "sort_by"
+        "work_mode", "job_type", "distance_km", "experience_level", "sort_by", "employer_type"
     ],
     "simplyhired": [
         "keywords", "job_title", "skills", "company", "location", "distance_km", "job_type",
@@ -148,15 +150,15 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
         "work_mode", "distance_km", "experience_level", "sort_by"
     ],
     "reed": [
-        "keywords", "location", "salary_min", "salary_max", "job_type", "work_mode",
+        "keywords", "job_title", "location", "salary_min", "salary_max", "job_type", "work_mode",
         "employer_type", "date_posted_days", "specialism", "hide_no_salary", "distance_km"
     ],
     "glassdoor": [
         "keywords", "job_title", "location", "date_posted_days", "job_type", "experience_level",
-        "work_mode", "salary_min", "company", "industry", "easy_apply", "distance_km"
+        "work_mode", "salary_min", "salary_max", "company", "industry", "easy_apply", "distance_km"
     ],
     "himalayas": [
-        "keywords", "location", "worldwide", "experience_level", "job_type", "salary_min",
+        "keywords", "job_title", "location", "worldwide", "experience_level", "job_type", "salary_min",
         "skills", "company", "industry", "timezone", "sort_by"
     ],
     "indeed": [
@@ -167,8 +169,12 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
         "keywords", "job_title", "location", "work_mode", "industry", "salary_min",
         "job_type", "experience_level", "company", "date_posted_days"
     ],
+    "remote": [
+        "keywords", "job_title", "category", "location", "job_type", "experience_level", "skills",
+        "company", "date_posted_days", "work_mode", "salary_min"
+    ],
     "remote_co": [
-        "keywords", "category", "location", "job_type", "experience_level", "skills",
+        "keywords", "job_title", "category", "location", "job_type", "experience_level", "skills",
         "company", "date_posted_days", "work_mode"
     ],
     "wellfound": [
@@ -177,14 +183,18 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
     ],
     "workable": [
         "keywords", "job_title", "location", "department", "job_type", "work_mode",
-        "company", "experience_level"
+        "company", "experience_level", "date_posted_days"
+    ],
+    "workatastartup": [
+        "keywords", "job_title", "location", "job_type", "experience_min", "company_size",
+        "industry", "equity", "salary_min"
     ],
     "ziprecruiter": [
-        "keywords", "location", "date_posted_days", "distance_km", "job_type", "salary_min",
+        "keywords", "job_title", "location", "date_posted_days", "distance_km", "job_type", "salary_min",
         "experience_level", "work_mode", "company"
     ],
     "jobspresso": [
-        "keywords", "location", "category", "skills"
+        "keywords", "job_title", "location", "category", "skills"
     ]
 }
 
@@ -192,6 +202,7 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
 class FilterEngine:
     """
     Translates UniversalJobFilter instances into portal-specific URL parameters and API payloads.
+    Also constructs exact web search URLs matching real-world portal specifications.
     """
 
     @staticmethod
@@ -204,7 +215,7 @@ class FilterEngine:
             terms.append(uf.keywords)
         if not terms and uf.skills:
             terms.append(uf.skills)
-        return " ".join(terms) if terms else "Software Engineer"
+        return " ".join(terms) if terms else "Sales Development Representative"
 
     @classmethod
     def adapt_for_portal(cls, portal_key: str, uf: UniversalJobFilter) -> Tuple[Dict[str, Any], List[str], List[str]]:
@@ -240,96 +251,331 @@ class FilterEngine:
         return portal_params, applied, omitted
 
     # -------------------------------------------------------------
-    # PORTAL-SPECIFIC ADAPTERS
+    # PORTAL-SPECIFIC ADAPTERS & URL BUILDERS
     # -------------------------------------------------------------
 
     @classmethod
-    def _build_foundit(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+    def _build_adzuna(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "query": role,
-            "locations": uf.location or ""
+            "q": role
         }
-        if uf.skills:
-            params["skills"] = uf.skills
-        if uf.company:
-            params["company"] = uf.company
-        if uf.experience_min is not None or uf.experience_max is not None:
-            emin = uf.experience_min or 0
-            emax = uf.experience_max or 30
-            params["experienceRanges"] = f"{emin}~{emax}"
-        if uf.salary_min or uf.salary_max:
-            smin = uf.salary_min or 0
-            smax = uf.salary_max or 10000000
-            params["salaryRanges"] = f"{smin}~{smax}"
-        if uf.date_posted_days:
-            if uf.date_posted_days <= 1:
-                params["postedDate"] = "1"
-            elif uf.date_posted_days <= 7:
-                params["postedDate"] = "7"
-            elif uf.date_posted_days <= 15:
-                params["postedDate"] = "15"
-            else:
-                params["postedDate"] = "30"
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["workMode"] = "remote"
-            elif "hybrid" in wm:
-                params["workMode"] = "hybrid"
-            elif "wfo" in wm or "office" in wm:
-                params["workMode"] = "wfo"
+        if uf.location:
+            params["w"] = uf.location
         if uf.job_type:
-            params["jobTypes"] = "permanent" if "full" in uf.job_type or "perm" in uf.job_type else "contract"
-        if uf.industry:
-            params["industries"] = uf.industry
-        if uf.department:
-            params["functions"] = uf.department
-        if uf.company_type:
-            params["companyTypes"] = uf.company_type
-        if uf.employer_type:
-            params["employerTypes"] = uf.employer_type
+            jt = uf.job_type.lower()
+            if "contract" in jt or "temp" in jt:
+                params["cty"] = "contract"
+                params["contract_type"] = "contract"
+            else:
+                params["cty"] = "permanent"
+                params["contract_type"] = "permanent"
+        if uf.date_posted_days:
+            days = uf.date_posted_days
+            params["date_posted"] = str(days)
+            params["f"] = str(days)
+        if uf.salary_min:
+            params["salary_min"] = str(uf.salary_min)
+        if uf.salary_max:
+            params["salary_max"] = str(uf.salary_max)
+        if uf.distance_km:
+            params["distance"] = str(uf.distance_km)
         if uf.sort_by:
-            params["sort"] = "2" if "date" in uf.sort_by.lower() or "recent" in uf.sort_by.lower() else "1"
+            params["sort_by"] = "date" if "date" in uf.sort_by.lower() else "relevance"
         return params
 
     @classmethod
     def _build_apna(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
+            "search": "true",
             "text": role,
-            "location": uf.location or "Bengaluru"
+            "raw_text_correction": "true"
         }
-        if uf.work_mode:
-            if "remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower():
-                params["workLocationType"] = "WORK_FROM_HOME"
-            elif "office" in uf.work_mode.lower() or "wfo" in uf.work_mode.lower():
-                params["workLocationType"] = "WORK_FROM_OFFICE"
+        if uf.location:
+            params["location_name"] = uf.location if "Region" in uf.location else f"{uf.location} Region"
+            params["location"] = uf.location
+        if uf.experience_min is not None:
+            params["minExperience"] = str(uf.experience_min)
         if uf.job_type:
             jt = uf.job_type.lower()
             if "part" in jt:
-                params["workType"] = "PART_TIME"
+                params["workType"] = "part_time"
             elif "intern" in jt:
-                params["workType"] = "INTERNSHIP"
+                params["workType"] = "internship"
             else:
-                params["workType"] = "FULL_TIME"
+                params["workType"] = "full_time"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["workMode"] = "wfh"
+                params["workLocationType"] = "WORK_FROM_HOME"
+            elif "hybrid" in wm:
+                params["workMode"] = "hybrid"
+            else:
+                params["workMode"] = "wfo"
+                params["workLocationType"] = "WORK_FROM_OFFICE"
+        if uf.date_posted_days:
+            # Apna uses hours in 'postedIn' (24 for 1 day, 168 for 7 days, 720 for 30 days)
+            if uf.date_posted_days <= 1:
+                params["postedIn"] = "24"
+            elif uf.date_posted_days <= 7:
+                params["postedIn"] = "168"
+            else:
+                params["postedIn"] = "720"
+        if uf.salary_min:
+            params["salary"] = str(uf.salary_min)
+            params["minSalary"] = str(uf.salary_min)
         if uf.work_shift:
             params["workShift"] = "NIGHT_SHIFT" if "night" in uf.work_shift.lower() else "DAY_SHIFT"
-        if uf.salary_min:
-            params["minSalary"] = uf.salary_min
-        if uf.experience_min is not None:
-            if uf.experience_min == 0:
-                params["experience"] = "FRESHER"
-            elif uf.experience_min <= 3:
-                params["experience"] = "1-3"
-            elif uf.experience_min <= 5:
-                params["experience"] = "3-5"
-            else:
-                params["experience"] = "5+"
         if uf.department:
             params["department"] = uf.department
         if uf.sort_by:
-            params["sort"] = "RECENT" if "date" in uf.sort_by.lower() or "recent" in uf.sort_by.lower() else "RELEVANCE"
+            params["sort"] = "RECENT" if "date" in uf.sort_by.lower() else "RELEVANCE"
+        return params
+
+    @classmethod
+    def _build_builtin(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "search": role,
+            "allLocations": "true"
+        }
+        if uf.location:
+            loc = uf.location.lower().strip()
+            if any(k in loc for k in ["uk", "gbr", "london", "united kingdom"]):
+                params["country"] = "GBR"
+            elif any(k in loc for k in ["us", "usa", "united states", "boston", "nyc", "sf"]):
+                params["country"] = "USA"
+            elif any(k in loc for k in ["in", "ind", "india", "bangalore", "bengaluru"]):
+                params["country"] = "IND"
+            params["location"] = uf.location
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["remote"] = "1"
+                params["workplace_path"] = "remote"
+            elif "hybrid" in wm:
+                params["remote"] = "2"
+                params["workplace_path"] = "hybrid"
+            else:
+                params["remote"] = "3"
+                params["workplace_path"] = "office"
+        if uf.experience_level:
+            params["experience"] = uf.experience_level.lower()
+        if uf.date_posted_days:
+            params["days_since_updated"] = str(uf.date_posted_days)
+        if uf.company_size:
+            params["company_size"] = uf.company_size
+        return params
+
+    @classmethod
+    def _build_careerbuilder(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "q": role
+        }
+        if uf.location:
+            params["where"] = uf.location
+        if uf.date_posted_days:
+            if uf.date_posted_days <= 1:
+                params["recency"] = "last 24 hours"
+                params["posted"] = "1"
+            elif uf.date_posted_days <= 7:
+                params["recency"] = "last 7 days"
+                params["posted"] = "7"
+            else:
+                params["recency"] = "last month"
+                params["posted"] = "30"
+        if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
+            params["cb_workplace"] = "telecommute"
+        if uf.job_type:
+            jt = uf.job_type.lower()
+            if "part" in jt:
+                params["emp"] = "jtpt"
+            elif "contract" in jt:
+                params["emp"] = "jtct"
+            else:
+                params["emp"] = "jtft"
+        return params
+
+    @classmethod
+    def _build_careerjet(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "s": role
+        }
+        if uf.location:
+            params["l"] = uf.location
+        if uf.date_posted_days:
+            params["nw"] = str(uf.date_posted_days)
+        if uf.job_type:
+            jt = uf.job_type.lower()
+            if "part" in jt:
+                params["cp"] = "p"
+            else:
+                params["cp"] = "f"
+            if "contract" in jt or "temp" in jt:
+                params["ct"] = "c"
+            else:
+                params["ct"] = "p"
+        if uf.distance_km:
+            params["radius"] = str(uf.distance_km)
+        if uf.sort_by:
+            params["sort"] = "date" if "date" in uf.sort_by.lower() else "relevance"
+        return params
+
+    @classmethod
+    def _build_dice(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "q": role
+        }
+        if uf.location:
+            params["location"] = uf.location
+        params["radius"] = str(uf.distance_km or 30)
+        params["radiusUnit"] = "mi"
+        if uf.date_posted_days:
+            if uf.date_posted_days <= 1:
+                params["filters.postedDate"] = "ONE"
+            elif uf.date_posted_days <= 3:
+                params["filters.postedDate"] = "THREE"
+            elif uf.date_posted_days <= 7:
+                params["filters.postedDate"] = "SEVEN"
+            elif uf.date_posted_days <= 14:
+                params["filters.postedDate"] = "FOURTEEN"
+            else:
+                params["filters.postedDate"] = "THIRTY"
+        if uf.job_type:
+            jt = uf.job_type.lower()
+            if "contract" in jt:
+                params["filters.employmentType"] = "CONTRACTS"
+            elif "third" in jt:
+                params["filters.employmentType"] = "THIRD_PARTY"
+            elif "part" in jt:
+                params["filters.employmentType"] = "PARTTIME"
+            else:
+                params["filters.employmentType"] = "FULLTIME"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["filters.workplaceTypes"] = "Remote"
+            elif "hybrid" in wm:
+                params["filters.workplaceTypes"] = "Hybrid"
+            else:
+                params["filters.workplaceTypes"] = "On-Site"
+        if uf.employer_type:
+            params["filters.employerType"] = "Direct Hire" if "company" in uf.employer_type.lower() or "direct" in uf.employer_type.lower() else "Recruiter"
+        else:
+            params["filters.employerType"] = "Direct Hire"
+        if uf.experience_level:
+            el = uf.experience_level.lower()
+            if "entry" in el or "fresher" in el or "junior" in el:
+                params["filters.experienceLevel"] = "ENTRY_LEVEL"
+            elif "mid" in el:
+                params["filters.experienceLevel"] = "MID_LEVEL"
+            elif "senior" in el or "lead" in el or "exec" in el:
+                params["filters.experienceLevel"] = "SENIOR_LEVEL"
+        return params
+
+    @classmethod
+    def _build_foundit(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "query": role,
+            "queryDerived": "true"
+        }
+        if uf.location:
+            params["location"] = uf.location
+            params["jobCities"] = uf.location
+            params["locations"] = uf.location
+        if uf.experience_min is not None or uf.experience_max is not None:
+            emin = uf.experience_min if uf.experience_min is not None else 0
+            emax = uf.experience_max if uf.experience_max is not None else emin
+            params["experienceRanges"] = f"{emin}~{emax}"
+        if uf.date_posted_days:
+            params["jobFreshness"] = str(uf.date_posted_days)
+            params["postedDate"] = str(uf.date_posted_days)
+        if uf.job_type:
+            params["jobTypes"] = "Permanent Job" if "full" in uf.job_type.lower() or "perm" in uf.job_type.lower() else "Contract"
+        if uf.employer_type:
+            params["postedBy"] = "Company" if "company" in uf.employer_type.lower() or "direct" in uf.employer_type.lower() else "Consultant"
+        else:
+            params["postedBy"] = "Company"
+        if uf.salary_min or uf.salary_max:
+            smin = uf.salary_min or 0
+            smax = uf.salary_max or 10000000
+            params["salaryRanges"] = f"{smin}~{smax}"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["workMode"] = "remote"
+            elif "hybrid" in wm:
+                params["workMode"] = "hybrid"
+            else:
+                params["workMode"] = "wfo"
+        return params
+
+    @classmethod
+    def _build_freshersworld(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "keywords": role
+        }
+        if uf.location:
+            params["city"] = uf.location
+        if uf.education:
+            params["course"] = uf.education
+        if uf.job_type:
+            params["jobtype"] = "internship" if "intern" in uf.job_type.lower() else "fulltime"
+        return params
+
+    @classmethod
+    def _build_glassdoor(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "sc.keyword": role
+        }
+        if uf.location:
+            params["location"] = uf.location
+        if uf.date_posted_days:
+            params["fromAge"] = str(uf.date_posted_days)
+        if uf.salary_min:
+            params["minSalary"] = str(uf.salary_min)
+        if uf.salary_max:
+            params["maxSalary"] = str(uf.salary_max)
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["remoteWorkType"] = "1"
+            elif "hybrid" in wm:
+                params["remoteWorkType"] = "2"
+            else:
+                params["remoteWorkType"] = "0"
+        if uf.job_type:
+            params["jobType"] = uf.job_type.lower()
+        return params
+
+    @classmethod
+    def _build_indeed(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "q": role
+        }
+        if uf.location:
+            params["l"] = uf.location
+        if uf.date_posted_days:
+            params["fromage"] = str(uf.date_posted_days)
+        if uf.distance_km:
+            params["radius"] = str(int(uf.distance_km * 0.621371))
+        else:
+            params["radius"] = "25"
+        if uf.salary_min:
+            params["salaryType"] = str(uf.salary_min)
+        if uf.job_type:
+            params["jt"] = uf.job_type.lower()
+        if uf.sort_by:
+            params["sort"] = "date" if "date" in uf.sort_by.lower() else "relevance"
         return params
 
     @classmethod
@@ -337,9 +583,15 @@ class FilterEngine:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
             "skills": uf.skills or role,
-            "locations": uf.location or ""
+            "search": "true",
+            "isLandingPage": "true",
+            "company_size": "0"
         }
+        if uf.location:
+            params["location"] = uf.location
+            params["locations"] = uf.location
         if uf.experience_min is not None:
+            params["years"] = str(uf.experience_min)
             if uf.experience_min <= 2:
                 params["experience"] = "0-2"
             elif uf.experience_min <= 5:
@@ -352,267 +604,111 @@ class FilterEngine:
             jt = uf.job_type.lower()
             if "intern" in jt:
                 params["job_type"] = "2"
-            elif "contract" in jt:
-                params["job_type"] = "1"
             else:
-                params["job_type"] = "0"
-        if uf.company_type:
-            params["company_type"] = uf.company_type
+                params["job_type"] = "1"
+        return params
+
+    @classmethod
+    def _build_himalayas(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "q": role,
+            "view": "filters",
+            "src": "adv"
+        }
+        if uf.location:
+            params["country"] = uf.location
+        if uf.job_type:
+            params["employment_type"] = "full-time" if "full" in uf.job_type.lower() else uf.job_type.lower()
+        if uf.salary_min or uf.salary_max:
+            smin = uf.salary_min or 0
+            smax = uf.salary_max or 100000
+            params["salary"] = f"{smin},{smax}"
+            params["currency"] = "inr" if uf.location and "india" in uf.location.lower() else "usd"
+        return params
+
+    @classmethod
+    def _build_jobleads(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "q": role
+        }
+        if uf.location:
+            params["location"] = uf.location
         if uf.work_mode:
-            params["work_mode"] = "remote" if "remote" in uf.work_mode.lower() else "office"
-        if uf.education:
-            params["education"] = uf.education
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["filter_by_remote"] = "remote"
+            elif "hybrid" in wm:
+                params["filter_by_remote"] = "hybrid"
+            else:
+                params["filter_by_remote"] = "in_person"
+        if uf.salary_min:
+            params["minSalary"] = str(uf.salary_min)
+            params["salary"] = str(uf.salary_min)
+        if uf.date_posted_days:
+            params["posted"] = str(uf.date_posted_days)
         return params
 
     @classmethod
     def _build_internshala(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "role": role,
-            "location": uf.location or ""
+            "role": role
         }
+        if uf.location:
+            params["location"] = uf.location
+        if uf.experience_min is not None:
+            params["experience"] = str(uf.experience_min)
+        if uf.salary_min:
+            # Internshala salary filters are in lakhs (e.g. 5 for 5 LPA)
+            sal_lakhs = uf.salary_min // 100000 if uf.salary_min >= 100000 else uf.salary_min
+            params["salary"] = str(sal_lakhs)
+            params["annual_salary"] = str(sal_lakhs)
         if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
             params["work_from_home"] = "true"
         if uf.job_type and "part" in uf.job_type.lower():
             params["part_time"] = "true"
-        if uf.salary_min:
-            params["annual_salary"] = uf.salary_min
-        if uf.stipend_min:
-            params["stipend"] = uf.stipend_min
-        if uf.experience_min:
-            params["experience"] = uf.experience_min
-        if uf.duration_months:
-            params["duration"] = uf.duration_months
-        if uf.category:
-            params["category"] = uf.category
         return params
 
     @classmethod
-    def _build_shine(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+    def _build_jooble(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "q": role,
-            "loc": uf.location or ""
+            "ukw": role,
+            "role": role
         }
-        if uf.experience_min is not None:
-            params["exp"] = str(uf.experience_min)
-        if uf.salary_min:
-            params["salary"] = str(uf.salary_min)
+        if uf.location:
+            params["rgns"] = uf.location
+            params["location"] = uf.location
         if uf.date_posted_days:
-            if uf.date_posted_days <= 1:
-                params["posted_date"] = "1"
-            elif uf.date_posted_days <= 7:
-                params["posted_date"] = "7"
-            else:
-                params["posted_date"] = "30"
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["work_mode"] = "remote"
-            elif "hybrid" in wm:
-                params["work_mode"] = "hybrid"
-            else:
-                params["work_mode"] = "wfo"
-        if uf.department:
-            params["functional_area"] = uf.department
-        if uf.industry:
-            params["industry"] = uf.industry
-        if uf.sort_by:
-            params["sort"] = "2" if "date" in uf.sort_by.lower() else "1"
-        return params
-
-    @classmethod
-    def _build_adzuna(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "q": role,
-            "w": uf.location or ""
-        }
-        if uf.distance_km:
-            params["distance"] = uf.distance_km
-        if uf.salary_min:
-            params["salary_min"] = uf.salary_min
-        if uf.salary_max:
-            params["salary_max"] = uf.salary_max
-        if uf.job_type:
-            jt = uf.job_type.lower()
-            if "contract" in jt or "temp" in jt:
-                params["contract_type"] = "contract"
-            elif "perm" in jt or "full" in jt:
-                params["contract_type"] = "permanent"
-            if "part" in jt:
-                params["working_hours"] = "part_time"
-            elif "full" in jt:
-                params["working_hours"] = "full_time"
-        if uf.sort_by:
-            params["sort_by"] = "date" if "date" in uf.sort_by.lower() else "relevance"
-        return params
-
-    @classmethod
-    def _build_builtin(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "search": role,
-            "location": uf.location or ""
-        }
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["remote"] = "1"
-            elif "hybrid" in wm:
-                params["remote"] = "2"
-            else:
-                params["remote"] = "3"
-        if uf.experience_level:
-            params["experience"] = uf.experience_level.lower()
-        if uf.date_posted_days:
-            params["days_since_updated"] = str(uf.date_posted_days)
-        if uf.category:
-            params["category"] = uf.category
-        if uf.company_size:
-            params["company_size"] = uf.company_size
-        return params
-
-    @classmethod
-    def _build_careerjet(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "s": role,
-            "l": uf.location or ""
-        }
-        if uf.distance_km:
-            params["radius"] = uf.distance_km
+            params["date"] = str(uf.date_posted_days)
         if uf.job_type:
             jt = uf.job_type.lower()
             if "part" in jt:
-                params["f"] = "parttime"
-            elif "contract" in jt or "temp" in jt:
-                params["f"] = "contract"
-            else:
-                params["f"] = "fulltime"
-        if uf.sort_by:
-            params["sort"] = "date" if "date" in uf.sort_by.lower() else "relevance"
-        return params
-
-    @classmethod
-    def _build_dice(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "q": role,
-            "location": uf.location or ""
-        }
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["workplaceTypes"] = "Remote"
-            elif "hybrid" in wm:
-                params["workplaceTypes"] = "Hybrid"
-            else:
-                params["workplaceTypes"] = "On-Site"
-        if uf.job_type:
-            jt = uf.job_type.lower()
-            if "contract" in jt:
-                params["employmentType"] = "CONTRACTS"
-            elif "third" in jt:
-                params["employmentType"] = "THIRD_PARTY"
-            elif "part" in jt:
-                params["employmentType"] = "PARTTIME"
-            else:
-                params["employmentType"] = "FULLTIME"
-        if uf.date_posted_days:
-            if uf.date_posted_days <= 1:
-                params["postedDate"] = "ONE"
-            elif uf.date_posted_days <= 7:
-                params["postedDate"] = "SEVEN"
-            elif uf.date_posted_days <= 14:
-                params["postedDate"] = "FOURTEEN"
-            else:
-                params["postedDate"] = "THIRTY"
-        if uf.experience_level:
-            el = uf.experience_level.lower()
-            if "entry" in el or "fresher" in el or "junior" in el:
-                params["experienceLevel"] = "ENTRY_LEVEL"
-            elif "mid" in el:
-                params["experienceLevel"] = "MID_LEVEL"
-            elif "senior" in el or "lead" in el or "exec" in el:
-                params["experienceLevel"] = "SENIOR_LEVEL"
-        if uf.easy_apply:
-            params["easyApply"] = "true"
-        return params
-
-    @classmethod
-    def _build_simplyhired(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "q": role,
-            "l": uf.location or ""
-        }
-        if uf.date_posted_days:
-            if uf.date_posted_days <= 1:
-                params["fdb"] = "1"
-            elif uf.date_posted_days <= 7:
-                params["fdb"] = "7"
-            elif uf.date_posted_days <= 14:
-                params["fdb"] = "14"
-            else:
-                params["fdb"] = "30"
-        if uf.job_type:
-            jt = uf.job_type.lower()
-            if "part" in jt:
-                params["fjt"] = "parttime"
+                params["jt"] = "2"
             elif "contract" in jt:
-                params["fjt"] = "contract"
+                params["jt"] = "3"
             elif "intern" in jt:
-                params["fjt"] = "internship"
+                params["jt"] = "4"
             else:
-                params["fjt"] = "fulltime"
+                params["jt"] = "1"
         if uf.salary_min:
-            params["fmi"] = str(uf.salary_min)
+            params["salaryMin"] = str(uf.salary_min)
+            params["salary"] = str(uf.salary_min)
+            params["salaryRate"] = "5" # Annual salary
         if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
-            params["fworkplace"] = "remote"
-        return params
-
-    @classmethod
-    def _build_timesjobs(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "keywords": role,
-            "location": uf.location or ""
-        }
-        if uf.experience_min is not None:
-            params["cboWorkExp1"] = uf.experience_min
-        if uf.experience_max is not None:
-            params["cboWorkExp2"] = uf.experience_max
-        if uf.date_posted_days:
-            params["postDate"] = uf.date_posted_days
-        if uf.work_mode:
-            params["workMode"] = uf.work_mode
-        if uf.department:
-            params["function"] = uf.department
-        if uf.industry:
-            params["industry"] = uf.industry
-        return params
-
-    @classmethod
-    def _build_freshersworld(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "keywords": role,
-            "city": uf.location or ""
-        }
-        if uf.education:
-            params["course"] = uf.education
-        if uf.job_type:
-            params["jobtype"] = "internship" if "intern" in uf.job_type.lower() else "fulltime"
+            params["telework"] = "1"
         return params
 
     @classmethod
     def _build_linkedin(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "keywords": role,
-            "location": uf.location or ""
+            "keywords": role
         }
+        if uf.location:
+            params["location"] = uf.location
         if uf.date_posted_days:
             if uf.date_posted_days <= 1:
                 params["f_TPR"] = "r86400"
@@ -666,13 +762,22 @@ class FilterEngine:
     def _build_naukri(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
+            "k": role,
             "keywords": role,
-            "location": uf.location or ""
+            "qproductJobSource": "2",
+            "naukriCampus": "true",
+            "jobPostType": "1"
         }
+        if uf.location:
+            params["l"] = uf.location.lower()
+            params["location"] = uf.location
         if uf.experience_min is not None:
             params["experience"] = str(uf.experience_min)
-        if uf.salary_min:
-            params["salaryRange"] = f"{uf.salary_min}to{uf.salary_max or ''}"
+        if uf.salary_min or uf.salary_max:
+            # Map salary to CTC filter string like '6to10', '3to6', '10to15'
+            smin_lakhs = (uf.salary_min or 0) // 100000 if (uf.salary_min or 0) >= 100000 else (uf.salary_min or 0)
+            smax_lakhs = (uf.salary_max or 1000000) // 100000 if (uf.salary_max or 1000000) >= 100000 else (uf.salary_max or 10)
+            params["ctcFilter"] = f"{smin_lakhs}to{smax_lakhs}"
         if uf.work_mode:
             wm = uf.work_mode.lower()
             if "remote" in wm or "wfh" in wm:
@@ -689,74 +794,209 @@ class FilterEngine:
     def _build_reed(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "keywords": role,
-            "location": uf.location or ""
+            "q": role,
+            "keywords": role
         }
+        if uf.location:
+            params["location"] = uf.location
         if uf.salary_min:
+            params["salaryFrom"] = str(uf.salary_min)
             params["salarymin"] = str(uf.salary_min)
         if uf.salary_max:
             params["salarymax"] = str(uf.salary_max)
-        if uf.hide_no_salary:
-            params["hidesalaryjobs"] = "true"
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["workfromhome"] = "true"
-            elif "hybrid" in wm:
-                params["hybrid"] = "true"
         if uf.job_type:
             jt = uf.job_type.lower()
             if "part" in jt:
-                params["parttime"] = "true"
+                params["partTime"] = "true"
             elif "contract" in jt:
                 params["contract"] = "true"
             elif "temp" in jt:
                 params["temp"] = "true"
-            elif "perm" in jt:
-                params["permanent"] = "true"
             else:
-                params["fulltime"] = "true"
-        if uf.distance_km:
-            params["distance"] = str(uf.distance_km)
+                params["perm"] = "true"
+                params["fullTime"] = "true"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["workingOption"] = "remote"
+                params["workfromhome"] = "true"
+            elif "hybrid" in wm:
+                params["workingOption"] = "hybrid"
+                params["hybrid"] = "true"
+            else:
+                params["workingOption"] = "onSite"
         if uf.date_posted_days:
             if uf.date_posted_days <= 1:
-                params["datecreatedoffset"] = "Today"
+                params["dateCreatedOffSet"] = "today"
             elif uf.date_posted_days <= 3:
-                params["datecreatedoffset"] = "LastThreeDays"
+                params["dateCreatedOffSet"] = "lastthreedays"
             elif uf.date_posted_days <= 7:
-                params["datecreatedoffset"] = "LastWeek"
+                params["dateCreatedOffSet"] = "lastweek"
             else:
-                params["datecreatedoffset"] = "LastTwoWeeks"
+                params["dateCreatedOffSet"] = "lasttwoweeks"
         return params
 
     @classmethod
-    def _build_himalayas(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+    def _build_remote(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "q": role,
-            "country": uf.location or ""
+            "query": role
         }
-        if uf.experience_level:
-            params["experience_level"] = uf.experience_level.lower()
+        if uf.location:
+            loc = uf.location.lower().strip()
+            if any(k in loc for k in ["india", "in", "ind", "bangalore", "bengaluru"]):
+                params["country"] = "IND"
+            elif any(k in loc for k in ["us", "usa", "united states", "boston", "nyc"]):
+                params["country"] = "USA"
+            elif any(k in loc for k in ["uk", "gbr", "united kingdom", "london"]):
+                params["country"] = "GBR"
+            else:
+                params["country"] = uf.location
         if uf.job_type:
-            params["employment_type"] = uf.job_type.lower()
+            jt = uf.job_type.lower()
+            if "part" in jt:
+                params["employmentType"] = "part_time"
+            elif "contract" in jt:
+                params["employmentType"] = "contract"
+            else:
+                params["employmentType"] = "full_time"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["workplaceLocation"] = "remote"
+            elif "hybrid" in wm:
+                params["workplaceLocation"] = "hybrid"
+            else:
+                params["workplaceLocation"] = "on_site"
+        if uf.experience_level:
+            el = uf.experience_level.lower()
+            if "entry" in el or "junior" in el or "fresher" in el:
+                params["seniority"] = "entry_level"
+            elif "senior" in el or "lead" in el:
+                params["seniority"] = "senior_level"
+            else:
+                params["seniority"] = "mid_level"
+        params["compensationCurrency"] = "USD"
+        return params
+
+    @classmethod
+    def _build_remote_co(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        return cls._build_remote(uf)
+
+    @classmethod
+    def _build_shine(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        slug_role = role.lower().strip().replace(" ", "-")
+        params: Dict[str, Any] = {
+            "q": slug_role,
+            "qActual": role,
+            "pure": "1",
+            "emp_type": "1" # Permanent / Full Time
+        }
+        if uf.location:
+            params["loc"] = uf.location
+            params["location"] = uf.location
+        if uf.experience_min is not None:
+            params["fexp"] = str(uf.experience_min)
+            params["exp"] = str(uf.experience_min)
         if uf.salary_min:
-            params["min_salary"] = uf.salary_min
-        if uf.skills:
-            params["skills"] = uf.skills
-        if uf.timezone:
-            params["timezone"] = uf.timezone
-        if uf.sort_by:
-            params["sort"] = "recent" if "date" in uf.sort_by.lower() else "featured"
+            params["fsalary"] = "2"
+            params["salary"] = str(uf.salary_min)
+        if uf.date_posted_days:
+            if uf.date_posted_days <= 1:
+                params["posted_date"] = "1"
+            elif uf.date_posted_days <= 7:
+                params["posted_date"] = "7"
+            else:
+                params["posted_date"] = "30"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["work_mode"] = "remote"
+            elif "hybrid" in wm:
+                params["work_mode"] = "hybrid"
+            else:
+                params["work_mode"] = "wfo"
+        return params
+
+    @classmethod
+    def _build_simplyhired(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "q": role
+        }
+        if uf.location:
+            params["l"] = uf.location
+        if uf.job_type:
+            jt = uf.job_type.lower()
+            if "part" in jt:
+                params["jt"] = "CF3CP"
+                params["fjt"] = "parttime"
+            elif "contract" in jt:
+                params["jt"] = "CF3CP"
+                params["fjt"] = "contract"
+            else:
+                params["jt"] = "CF3CP"
+                params["fjt"] = "fulltime"
+        if uf.salary_min:
+            params["mip"] = str(uf.salary_min)
+            params["fmi"] = str(uf.salary_min)
+        if uf.date_posted_days:
+            days = str(uf.date_posted_days)
+            params["t"] = days
+            params["fdb"] = days
+        if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
+            params["fworkplace"] = "remote"
+        return params
+
+    @classmethod
+    def _build_timesjobs(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "keywords": role,
+            "refreshed": "true"
+        }
+        if uf.location:
+            params["location"] = uf.location
+        if uf.experience_min is not None:
+            params["experience"] = str(uf.experience_min)
+            params["cboWorkExp1"] = uf.experience_min
+        if uf.experience_max is not None:
+            params["cboWorkExp2"] = uf.experience_max
+        if uf.date_posted_days:
+            params["postDate"] = uf.date_posted_days
+        if uf.work_mode:
+            params["workMode"] = uf.work_mode
+        return params
+
+    @classmethod
+    def _build_wellfound(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "role": role
+        }
+        if uf.location:
+            params["location"] = uf.location
+        if uf.salary_min:
+            params["salary"] = str(uf.salary_min)
+        if uf.equity:
+            params["equity"] = "true"
+        if uf.company_stage:
+            params["stage"] = uf.company_stage
         return params
 
     @classmethod
     def _build_workable(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "query": role,
-            "location": uf.location or ""
+            "query": role
         }
+        if uf.location:
+            params["location"] = uf.location
+        if uf.date_posted_days:
+            params["day_range"] = str(uf.date_posted_days)
+        else:
+            params["day_range"] = "30"
         if uf.work_mode:
             wm = uf.work_mode.lower()
             if "remote" in wm or "wfh" in wm:
@@ -766,9 +1006,84 @@ class FilterEngine:
             else:
                 params["workplace"] = "on_site"
         if uf.job_type:
-            params["employment_type"] = uf.job_type.lower()
-        if uf.department:
-            params["department"] = uf.department
+            jt = uf.job_type.lower()
+            if "part" in jt:
+                params["employment_type"] = "part_time"
+            elif "contract" in jt:
+                params["employment_type"] = "contract"
+            else:
+                params["employment_type"] = "full_time"
+        if uf.experience_level:
+            params["experience"] = "mid_senior_level" if "mid" in uf.experience_level.lower() or "senior" in uf.experience_level.lower() else "entry_level"
+        else:
+            params["experience"] = "mid_senior_level"
+        return params
+
+    @classmethod
+    def _build_workatastartup(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "demographic": "any",
+            "hasEquity": "any",
+            "hasSalary": "any",
+            "industry": uf.industry or "any",
+            "interviewProcess": "any",
+            "jobType": "fulltime" if not uf.job_type or "full" in uf.job_type.lower() else uf.job_type.lower(),
+            "layout": "list-compact",
+            "query": role,
+            "role": "any",
+            "sortBy": "keyword",
+            "tab": "any",
+            "usVisaNotRequired": "any"
+        }
+        if uf.location:
+            params["locations"] = uf.location
+        if uf.experience_min is not None:
+            params["minExperience"] = str(uf.experience_min)
+        return params
+
+    @classmethod
+    def _build_ziprecruiter(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        role = cls.get_effective_role(uf)
+        params: Dict[str, Any] = {
+            "search": role,
+            "location_explicitly_set": "true",
+            "radius": str(uf.distance_km or 25)
+        }
+        if uf.location:
+            params["location"] = uf.location
+        if uf.date_posted_days:
+            params["days"] = str(uf.date_posted_days)
+        else:
+            params["days"] = "30"
+        if uf.job_type:
+            jt = uf.job_type.lower()
+            if "part" in jt:
+                params["refine_by_employment"] = "employment_type:part_time"
+            elif "contract" in jt:
+                params["refine_by_employment"] = "employment_type:contractor"
+            else:
+                params["refine_by_employment"] = "employment_type:full_time"
+        else:
+            params["refine_by_employment"] = "employment_type:full_time"
+        if uf.work_mode:
+            wm = uf.work_mode.lower()
+            if "remote" in wm or "wfh" in wm:
+                params["refine_by_location_type"] = "only_remote"
+            else:
+                params["refine_by_location_type"] = "no_remote"
+        if uf.experience_level:
+            el = uf.experience_level.lower()
+            if "entry" in el or "junior" in el or "fresher" in el:
+                params["refine_by_experience_level"] = "entry_level"
+            elif "senior" in el or "lead" in el:
+                params["refine_by_experience_level"] = "senior"
+            else:
+                params["refine_by_experience_level"] = "mid"
+        else:
+            params["refine_by_experience_level"] = "mid"
+        if uf.salary_min:
+            params["refine_by_salary"] = str(uf.salary_min)
         return params
 
     @classmethod
@@ -781,136 +1096,130 @@ class FilterEngine:
             params["category"] = uf.category.lower()
         return params
 
-    @classmethod
-    def _build_indeed(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "q": role,
-            "l": uf.location or ""
-        }
-        if uf.date_posted_days:
-            params["fromage"] = str(uf.date_posted_days)
-        if uf.job_type:
-            params["jt"] = uf.job_type.lower()
-        if uf.distance_km:
-            params["radius"] = str(int(uf.distance_km * 0.621371))
-        if uf.sort_by:
-            params["sort"] = "date" if "date" in uf.sort_by.lower() else "relevance"
-        return params
+    # -------------------------------------------------------------
+    # HIGH-LEVEL WEB URL GENERATOR FOR ALL 26 PORTALS
+    # -------------------------------------------------------------
 
     @classmethod
-    def _build_glassdoor(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+    def build_portal_url(cls, portal_key: str, uf: UniversalJobFilter) -> str:
+        """
+        Builds the exact realistic web search URL matching the user's filtered browser URL structure.
+        """
+        portal_key = portal_key.lower().strip()
+        params, _, _ = cls.adapt_for_portal(portal_key, uf)
         role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "sc.keyword": role,
-            "location": uf.location or ""
-        }
-        if uf.date_posted_days:
-            params["fromAge"] = str(uf.date_posted_days)
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["remoteWorkType"] = "1"
-            elif "hybrid" in wm:
-                params["remoteWorkType"] = "2"
-            else:
-                params["remoteWorkType"] = "0"
-        if uf.job_type:
-            params["jobType"] = uf.job_type.lower()
-        return params
+        loc = uf.location or ""
+        
+        role_slug = re.sub(r'[^a-zA-Z0-9]+', '-', role.strip().lower()).strip('-')
+        loc_slug = re.sub(r'[^a-zA-Z0-9]+', '-', loc.strip().lower()).strip('-') if loc else ""
 
-    @classmethod
-    def _build_ziprecruiter(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "search": role,
-            "location": uf.location or ""
-        }
-        if uf.date_posted_days:
-            params["days"] = str(uf.date_posted_days)
-        if uf.salary_min:
-            params["refine_by_salary"] = str(uf.salary_min)
-        if uf.distance_km:
-            params["radius"] = str(int(uf.distance_km * 0.621371))
-        return params
-
-    @classmethod
-    def _build_jooble(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "role": role,
-            "location": uf.location or ""
-        }
-        if uf.salary_min:
-            params["salary"] = str(uf.salary_min)
-        if uf.date_posted_days:
-            params["date"] = str(uf.date_posted_days)
-        if uf.distance_km:
-            params["rg"] = str(uf.distance_km)
-        if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
-            params["telework"] = "1"
-        return params
-
-    @classmethod
-    def _build_careerbuilder(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "q": role,
-            "where": uf.location or ""
-        }
-        if uf.date_posted_days:
-            params["posted"] = str(uf.date_posted_days)
-        if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
-            params["cb_workplace"] = "telecommute"
-        if uf.job_type:
-            jt = uf.job_type.lower()
-            if "part" in jt:
-                params["emp"] = "jtpt"
-            elif "contract" in jt:
-                params["emp"] = "jtct"
-            else:
-                params["emp"] = "jtft"
-        return params
-
-    @classmethod
-    def _build_jobleads(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "q": role,
-            "location": uf.location or ""
-        }
-        if uf.work_mode:
-            params["workSetting"] = uf.work_mode.lower()
-        if uf.salary_min:
-            params["salary"] = str(uf.salary_min)
-        if uf.date_posted_days:
-            params["posted"] = str(uf.date_posted_days)
-        return params
-
-    @classmethod
-    def _build_remote_co(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "query": role,
-            "location": uf.location or ""
-        }
-        if uf.category:
-            params["category"] = uf.category.lower()
-        if uf.job_type:
-            params["job_type"] = uf.job_type.lower()
-        return params
-
-    @classmethod
-    def _build_wellfound(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
-        role = cls.get_effective_role(uf)
-        params: Dict[str, Any] = {
-            "role": role,
-            "location": uf.location or ""
-        }
-        if uf.salary_min:
-            params["salary"] = str(uf.salary_min)
-        if uf.equity:
-            params["equity"] = "true"
-        if uf.company_stage:
-            params["stage"] = uf.company_stage
-        return params
+        if portal_key == "adzuna":
+            return f"https://www.adzuna.in/search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "apna":
+            return f"https://apna.co/jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "builtin":
+            work_path = params.get("workplace_path", "")
+            subpath = f"/{work_path}" if work_path else ""
+            clean_params = {k: v for k, v in params.items() if k != "workplace_path"}
+            return f"https://builtin.com/jobs{subpath}?{urllib.parse.urlencode(clean_params)}"
+            
+        elif portal_key == "careerbuilder":
+            return f"https://www.careerbuilder.com/job-listings/search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "careerjet":
+            return f"https://www.careerjet.co.in/jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "dice":
+            return f"https://www.dice.com/jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "foundit":
+            if loc_slug:
+                return f"https://www.foundit.in/search/{role_slug}-jobs-in-{loc_slug}?{urllib.parse.urlencode(params)}"
+            return f"https://www.foundit.in/search/{role_slug}-jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "freshersworld":
+            if loc_slug:
+                return f"https://www.freshersworld.com/jobs/jobsearch/{role_slug}-jobs-in-{loc_slug}?{urllib.parse.urlencode(params)}"
+            return f"https://www.freshersworld.com/jobs/jobsearch/{role_slug}-jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "glassdoor":
+            if loc_slug:
+                return f"https://www.glassdoor.co.in/Job/{loc_slug}-{role_slug}-jobs-SRCH_IL.0,{len(loc_slug)}_KO{len(loc_slug)+1},{len(loc_slug)+1+len(role_slug)}.htm?{urllib.parse.urlencode(params)}"
+            return f"https://www.glassdoor.co.in/Job/jobs.htm?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "indeed":
+            domain = "in.indeed.com" if "india" in loc.lower() or "bangalore" in loc.lower() or "bengaluru" in loc.lower() else "www.indeed.com"
+            return f"https://{domain}/jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "instahyre":
+            return f"https://www.instahyre.com/search-jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "himalayas":
+            country_slug = "india" if "india" in loc.lower() or "bangalore" in loc.lower() or "bengaluru" in loc.lower() else ("united-states" if "us" in loc.lower() else "worldwide")
+            emp_type = params.get("employment_type", "full-time")
+            return f"https://himalayas.app/jobs/countries/{country_slug}/{emp_type}-{role_slug}?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "jobleads":
+            country_code = "in" if "india" in loc.lower() or "bangalore" in loc.lower() or "bengaluru" in loc.lower() else "us"
+            encoded_role = urllib.parse.quote(role)
+            if loc:
+                encoded_loc = urllib.parse.quote(loc)
+                return f"https://www.jobleads.com/{country_code}/jobs/l/{encoded_loc}/q/{encoded_role}?{urllib.parse.urlencode(params)}"
+            return f"https://www.jobleads.com/{country_code}/jobs/q/{encoded_role}?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "internshala":
+            exp_str = f"/experience-{params['experience']}" if "experience" in params else ""
+            sal_str = f"/salary-{params['salary']}" if "salary" in params else ""
+            if loc_slug:
+                return f"https://internshala.com/jobs/{role_slug}-jobs-in-{loc_slug}{exp_str}{sal_str}"
+            return f"https://internshala.com/jobs/{role_slug}-jobs{exp_str}{sal_str}"
+            
+        elif portal_key == "jooble":
+            return f"https://in.jooble.org/SearchResult?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "linkedin":
+            return f"https://www.linkedin.com/jobs/search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "naukri":
+            if loc_slug:
+                return f"https://www.naukri.com/{role_slug}-jobs-in-{loc_slug}?{urllib.parse.urlencode(params)}"
+            return f"https://www.naukri.com/{role_slug}-jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "reed":
+            mode_prefix = "on-site-" if params.get("workingOption") == "onSite" else ""
+            if loc_slug:
+                return f"https://www.reed.co.uk/jobs/{mode_prefix}{role_slug}-jobs-in-{loc_slug}?{urllib.parse.urlencode(params)}"
+            return f"https://www.reed.co.uk/jobs/{mode_prefix}{role_slug}-jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key in ["remote", "remote_co"]:
+            return f"https://remote.com/jobs/all?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "shine":
+            return f"https://www.shine.com/job-search/{role_slug}-jobs?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "simplyhired":
+            return f"https://www.simplyhired.co.in/search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "timesjobs":
+            return f"https://www.timesjobs.com/job-search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "wellfound":
+            if loc_slug:
+                return f"https://wellfound.com/role/l/{role_slug}/{loc_slug}"
+            return f"https://wellfound.com/role/l/{role_slug}"
+            
+        elif portal_key == "workable":
+            return f"https://jobs.workable.com/search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "workatastartup":
+            return f"https://www.workatastartup.com/companies?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "ziprecruiter":
+            return f"https://www.ziprecruiter.com/jobs-search?{urllib.parse.urlencode(params)}"
+            
+        elif portal_key == "jobspresso":
+            return f"https://jobspresso.co/?{urllib.parse.urlencode(params)}"
+            
+        return f"https://www.google.com/search?q={urllib.parse.quote(role + ' ' + loc)}"

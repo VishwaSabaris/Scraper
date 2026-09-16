@@ -57,20 +57,15 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
         loc_slug = effective_loc.lower().strip().replace(" ", "-")
         loc_slug = "".join(c for c in loc_slug if c.isalnum() or c == "-")
         
+    exp_str = f"/experience-{fp['experience']}" if fp.get("experience") else ""
+    sal_str = f"/salary-{fp['salary']}" if fp.get("salary") else ""
+    
     for page in range(1, max_pages + 1):
+        page_str = f"/page-{page}" if page > 1 else ""
         if loc_slug:
-            base_url = f"https://internshala.com/jobs/{role_slug}-jobs-in-{loc_slug}/page-{page}/"
+            url = f"https://internshala.com/jobs/{role_slug}-jobs-in-{loc_slug}{exp_str}{sal_str}{page_str}/"
         else:
-            base_url = f"https://internshala.com/jobs/{role_slug}-jobs/page-{page}/"
-            
-        extra_q = {}
-        for k in ["work_from_home", "part_time", "annual_salary", "stipend", "experience", "duration"]:
-            if fp.get(k):
-                extra_q[k] = fp[k]
-        if extra_q:
-            url = f"{base_url}?{urllib.parse.urlencode(extra_q)}"
-        else:
-            url = base_url
+            url = f"https://internshala.com/jobs/{role_slug}-jobs{exp_str}{sal_str}{page_str}/"
             
         print(f"[*] Internshala: Navigating to page {page} ({url})...")
         
@@ -85,7 +80,7 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
             
             if res.status_code != 200:
                 # Fallback to search query parameter
-                fallback_url = f"https://internshala.com/jobs/keywords-{urllib.parse.quote(job_role)}/page-{page}/"
+                fallback_url = f"https://internshala.com/jobs/keywords-{urllib.parse.quote(effective_role)}{page_str}/"
                 print(f"[*] Internshala: Trying fallback search URL ({fallback_url})...")
                 res = await asyncio.to_thread(
                     c_requests.get,
@@ -99,7 +94,7 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
                     break
                     
             soup = BeautifulSoup(res.text, "html.parser")
-            cards = soup.select(".individual_internship, .job-card, [class*='individual_internship']")
+            cards = soup.select(".individual_internship, .job-card, [class*='individual_internship'], .container-fluid.individual_internship")
             print(f"[+] Internshala: Found {len(cards)} job card elements on page {page}.")
             
             if not cards:
@@ -112,7 +107,7 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
                     continue
                     
                 title = title_el.text.strip()
-                if not (is_role_match(title, job_role) or any(term.lower() in title.lower() for term in ["python", "django", "developer", "engineer"] if term.lower() in job_role.lower())):
+                if not is_role_match(title, effective_role):
                     continue
                     
                 apply_link = title_el.get("href", "")
@@ -123,7 +118,7 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
                 company = comp_el.text.strip() if comp_el else "Internshala Employer"
                 
                 loc_el = card.select_one(".location_link, #location_names, .locations, [class*='location']")
-                job_location = loc_el.text.strip() if loc_el else (location or "Work from home / India")
+                job_location = loc_el.text.strip() if loc_el else (effective_loc or "Work from home / India")
                 
                 sal_el = card.select_one(".salary, .stipend, .desktop-text")
                 salary = sal_el.text.strip() if sal_el else "Not disclosed"
@@ -131,14 +126,24 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
                 exp_el = card.select_one(".experience, .exp-item")
                 exp = exp_el.text.strip() if exp_el else "0-2 years"
                 
-                details = f"Company: {company} | CTC: {salary} | Experience: {exp} | Location: {job_location}"
+                # Date posted extraction
+                date_posted = "Recent"
+                date_el = card.select_one(".posted_by_container, .status-inactive, .status-success, .posted_on, [class*='status'], [class*='posted']")
+                if date_el:
+                    date_posted = date_el.text.strip()
+                else:
+                    date_match = re.search(r'(\d+\s+(?:days?|weeks?|hours?)\s+ago|Just now|Today|Few hours ago)', card.text, re.IGNORECASE)
+                    if date_match:
+                        date_posted = date_match.group(1).strip()
+                        
+                details = f"Company: {company} | CTC: {salary} | Experience: {exp} | Location: {job_location} | Posted: {date_posted}"
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
                         "Company Name": company,
                         "Location": job_location,
-                        "Date Posted": "Recent",
+                        "Date Posted": date_posted,
                         "Apply Link": apply_link,
                         "Company Link": "N/A",
                         "No. of Applicants": "N/A",

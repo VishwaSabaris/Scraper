@@ -73,9 +73,9 @@ async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=Fal
         search_url = f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={formatted_role}"
         if loc_id and loc_type:
             search_url += f"&locT={loc_type}&locId={loc_id}"
-        for k in ["fromAge", "remoteWorkType", "jobType"]:
-            if fp.get(k):
-                search_url += f"&{k}={fp[k]}"
+        for k, v in fp.items():
+            if k not in ["role", "location", "sc.keyword", "locT", "locId"]:
+                search_url += f"&{k}={urllib.parse.quote(str(v))}"
             
         print(f"[*] Glassdoor: Navigating to search results ({search_url})...")
         try:

@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_apna_jobs(job_role, location="Bengaluru", max_pages=1, filter_params=None, **kwargs):
     """
@@ -14,7 +14,7 @@ async def scrape_apna_jobs(job_role, location="Bengaluru", max_pages=1, filter_p
     """
     fp = filter_params or {}
     effective_role = fp.get("text") or job_role
-    effective_loc = fp.get("location") or location or "Bengaluru"
+    effective_loc = fp.get("location_name") or fp.get("location") or location or "Bengaluru"
     
     print(f"[*] Apna: Fetching job listings for '{effective_role}' in '{effective_loc or 'India'}'...")
     
@@ -34,8 +34,10 @@ async def scrape_apna_jobs(job_role, location="Bengaluru", max_pages=1, filter_p
             "page": page_idx
         }
         if effective_loc:
+            params["location_name"] = effective_loc if "Region" in effective_loc else f"{effective_loc} Region"
             params["location"] = effective_loc
-        for k in ["workLocationType", "workType", "workShift", "minSalary", "experience", "department", "sort"]:
+            
+        for k in ["minExperience", "workType", "workMode", "postedIn", "salary", "workLocationType", "workShift", "minSalary", "experience", "department", "sort"]:
             if fp.get(k):
                 params[k] = fp[k]
                 
@@ -96,17 +98,23 @@ async def scrape_apna_jobs(job_role, location="Bengaluru", max_pages=1, filter_p
                     job_location = spans_sm[1].text.strip()
                     salary = spans_sm[2].text.strip() if len(spans_sm) > 2 else "Not disclosed"
                     
-                # Tags: work mode, job type, experience
+                # Tags: work mode, job type, experience, date
                 tags = [t.text.strip() for t in a.find_all("div", class_=lambda c: c and "bg-[#F2F2F3]" in c)]
                 tags_str = ", ".join(tags) if tags else "Full Time"
                 
+                date_posted = "Recent"
+                for tag_text in tags:
+                    if any(w in tag_text.lower() for w in ["ago", "today", "yesterday", "day", "week", "just"]):
+                        date_posted = normalize_date_posted(tag_text)
+                        break
+                        
                 details = f"Company: {company} | Location: {job_location} | Salary: {salary} | Tags: {tags_str}"
                 
                 jobs_data.append({
                     "Job Role": title,
                     "Company Name": company,
                     "Location": job_location,
-                    "Date Posted": "Recent",
+                    "Date Posted": date_posted,
                     "Apply Link": apply_link,
                     "Company Link": "N/A",
                     "No. of Applicants": "N/A",
@@ -135,7 +143,7 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python Developer"
+        role = "Sales Development Representative"
         loc = "Bengaluru"
         
     results = asyncio.run(scrape_apna_jobs(role, loc, max_pages=1))

@@ -68,9 +68,9 @@ async def scrape_remote_jobs(job_role, location="", max_pages=5, filter_params=N
         }
         if effective_loc:
             params["country"] = effective_loc
-        for k in ["category", "job_type"]:
-            if fp.get(k):
-                params[k] = fp[k]
+        for k, v in fp.items():
+            if k not in ["role", "location", "query", "page"]:
+                params[k] = v
                 
         url = f"https://remote.com/jobs/all?{urllib.parse.urlencode(params)}"
         print(f"[*] Remote.com: Navigating to page {page} ({url})...")

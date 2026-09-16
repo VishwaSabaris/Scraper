@@ -1,9 +1,10 @@
 import asyncio
 import random
 import sys
+import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv, is_role_match
 
 def is_role_match(job_title, requested_role):
     """Strictly matches requested job role terms against job titles to prevent irrelevant job listings."""

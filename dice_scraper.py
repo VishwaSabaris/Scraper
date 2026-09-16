@@ -6,7 +6,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted
 
 async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -36,8 +36,15 @@ async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=Non
         }
         if effective_loc:
             params["location"] = effective_loc
-        for k in ["workplaceTypes", "employmentType", "postedDate", "experienceLevel", "easyApply"]:
-            if fp.get(k):
+        params["radius"] = fp.get("radius", "30")
+        params["radiusUnit"] = fp.get("radiusUnit", "mi")
+        
+        # Support both direct and prefixed filter parameter keys
+        filter_keys = ["postedDate", "employmentType", "employerType", "workplaceTypes", "experienceLevel", "easyApply"]
+        for k in filter_keys:
+            if fp.get(f"filters.{k}"):
+                params[f"filters.{k}"] = fp[f"filters.{k}"]
+            elif fp.get(k):
                 params[f"filters.{k}"] = fp[k]
                 
         url = f"https://www.dice.com/jobs?{urllib.parse.urlencode(params)}"
@@ -83,9 +90,9 @@ async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=Non
                                     depth += 1
                                 elif char == '}':
                                     depth -= 1
-                                    if depth == 0:
-                                        end_idx = i + 1
-                                        break
+                                if depth == 0:
+                                    end_idx = i + 1
+                                    break
                             if end_idx > 0:
                                 try:
                                     parsed = json.loads(sub[:end_idx])
@@ -103,7 +110,7 @@ async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=Non
             added_on_page = 0
             for item in raw_job_items:
                 title = item.get("title", "").strip()
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 company = item.get("companyName") or "Dice Employer"
@@ -121,10 +128,13 @@ async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=Non
                     apply_link = f"https://www.dice.com/job-detail/{item.get('id')}"
                     
                 posted_date = item.get("postedDate") or "Recent"
+                posted_date = normalize_date_posted(str(posted_date))
+                
                 salary = item.get("salary") or "Not disclosed"
                 emp_type = item.get("employmentType") or "Full-time"
+                desc = item.get("summary") or item.get("description") or ""
                 
-                details = f"Company: {company} | Type: {emp_type} | Salary: {salary} | Location: {job_location}"
+                details = f"Company: {company} | Type: {emp_type} | Salary: {salary} | Location: {job_location} | {desc}"
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
@@ -160,8 +170,8 @@ if __name__ == "__main__":
         role = sys.argv[1]
         loc = ""
     else:
-        role = "Python Developer"
-        loc = "Remote"
+        role = "Sales Development Representative"
+        loc = "Boston, MA"
         
     results = asyncio.run(scrape_dice_jobs(role, loc, max_pages=1))
     print(f"\n[+] Scraper finished. Found {len(results)} jobs.")

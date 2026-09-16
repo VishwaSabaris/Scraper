@@ -3,13 +3,14 @@ Enterprise Company Website Resolver & Date Standardizer
 ======================================================
 1. Formats 100% of 'Date Posted' timestamps into standardized ISO YYYY-MM-DD.
 2. Resolves official corporate websites for companies in the dataset.
-3. Uses high-coverage dictionary mapping, domain heuristics, and web discovery.
+3. Uses high-coverage dictionary mapping, fast DNS pre-checks, domain heuristics, and web discovery.
 4. Caches results into data/company_websites.csv for instant subsequent lookups.
 """
 
 import os
 import re
 import csv
+import socket
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
@@ -18,66 +19,87 @@ from utils import normalize_date_posted
 
 CACHE_FILE = os.path.abspath("./data/company_websites.csv")
 
+# Domains that are directories or portals, not official company homepages
+EXCLUDED_DOMAINS = {
+    "google.com", "google.co.in", "duckduckgo.com", "bing.com", "yahoo.com",
+    "linkedin.com", "indeed.com", "glassdoor.com", "glassdoor.co.in", "naukri.com",
+    "shine.com", "foundit.in", "instahyre.com", "internshala.com", "apna.co",
+    "timesjobs.com", "freshersworld.com", "zaubacorp.com", "toffler.in",
+    "ambitionbox.com", "zoominfo.com", "pitchbook.com", "theorg.com", "craft.co",
+    "owler.com", "levels.fyi", "ycombinator.com", "github.com", "facebook.com",
+    "twitter.com", "x.com", "instagram.com", "youtube.com", "wikipedia.org",
+    "crunchbase.com", "reed.co.uk", "wellfound.com", "jobspresso.co", "himalayas.app",
+    "remote.com", "ziprecruiter.com", "careerbuilder.com", "simplyhired.com"
+}
+
 # High-Coverage Enterprise Company Map
 TOP_CORPORATE_MAP = {
+    "moengage": "https://www.moengage.com",
+    "crowdstrike": "https://www.crowdstrike.com",
     "salesforce": "https://www.salesforce.com",
+    "salesforce.com": "https://www.salesforce.com",
+    "ebizon": "https://www.ebizontek.com",
+    "ebizon netinfo": "https://www.ebizontek.com",
+    "nielseniq": "https://www.nielseniq.com",
+    "testzeus": "https://www.testzeus.com",
+    "kadwin": "https://www.kadwin.com",
+    "kadwin technologies": "https://www.kadwin.com",
+    "new relic": "https://www.newrelic.com",
+    "new relic one": "https://www.newrelic.com",
+    "thermo fisher": "https://www.thermofisher.com",
+    "thermo fisher scientific": "https://www.thermofisher.com",
+    "mindtickle": "https://www.mindtickle.com",
+    "snowflake": "https://www.snowflake.com",
+    "snowflake computing": "https://www.snowflake.com",
+    "accenture": "https://www.accenture.com",
+    "bytedance": "https://www.bytedance.com",
+    "byteplus": "https://www.byteplus.com",
+    "atlassian": "https://www.atlassian.com",
+    "phonepe": "https://www.phonepe.com",
+    "axis bank": "https://www.axisbank.com",
+    "linkedin": "https://www.linkedin.com",
+    "leverage edu": "https://www.leverageedu.com",
     "pwc": "https://www.pwc.com",
     "pricewaterhousecoopers": "https://www.pwc.com",
     "pwc acceleration centers": "https://www.pwc.com",
     "aveva": "https://www.aveva.com",
-    "thermo fisher scientific": "https://www.thermofisher.com",
-    "thermo fisher": "https://www.thermofisher.com",
     "natwest group": "https://www.natwestgroup.com",
     "natwest": "https://www.natwestgroup.com",
     "mcafee": "https://www.mcafee.com",
     "mphasis": "https://www.mphasis.com",
-    "hcl comnet": "https://www.hcltech.com",
-    "hcl techbee": "https://www.hcltech.com",
     "hcl tech": "https://www.hcltech.com",
     "hcltech": "https://www.hcltech.com",
     "hcl": "https://www.hcltech.com",
-    "tata consultancy services": "https://www.tcs.com",
     "tcs": "https://www.tcs.com",
-    "itc infotech india": "https://www.itcinfotech.com",
+    "tata consultancy services": "https://www.tcs.com",
     "itc infotech": "https://www.itcinfotech.com",
     "capgemini": "https://www.capgemini.com",
-    "datamatics global service": "https://www.datamatics.com",
     "datamatics": "https://www.datamatics.com",
     "deloitte": "https://www.deloitte.com",
     "luxoft": "https://www.luxoft.com",
-    "luxoft india": "https://www.luxoft.com",
     "withum": "https://www.withum.com",
     "tekion": "https://www.tekion.com",
-    "tekion corp": "https://www.tekion.com",
-    "thales group": "https://www.thalesgroup.com",
     "thales": "https://www.thalesgroup.com",
+    "thales group": "https://www.thalesgroup.com",
     "tarento group": "https://www.tarento.com",
-    "varite inc": "https://www.varite.com",
     "varite": "https://www.varite.com",
     "tresvista": "https://www.tresvista.com",
     "world wide technology": "https://www.wwt.com",
     "zenda": "https://www.zenda.com",
-    "zemoso technologies": "https://www.zemosolabs.com",
+    "zemoso": "https://www.zemosolabs.com",
     "moneyview": "https://www.moneyview.in",
     "o9 solutions": "https://www.o9solutions.com",
-    "o9 solutions, inc.": "https://www.o9solutions.com",
     "redica systems": "https://www.redica.com",
     "terralogic": "https://www.terralogic.com",
     "objectways": "https://www.objectways.com",
     "c5i": "https://www.c5i.ai",
-    "huawei technologies": "https://www.huawei.com",
     "huawei": "https://www.huawei.com",
     "gradient cyber": "https://www.gradientcyber.com",
     "ziroh labs": "https://www.ziroh.com",
     "appsierra": "https://www.appsierra.com",
     "astra security": "https://www.getastra.com",
     "infosys": "https://www.infosys.com",
-    "infosys limited": "https://www.infosys.com",
     "wipro": "https://www.wipro.com",
-    "wipro limited": "https://www.wipro.com",
-    "accenture": "https://www.accenture.com",
-    "accenture india": "https://www.accenture.com",
-    "accenture india private limited": "https://www.accenture.com",
     "amazon": "https://www.amazon.com",
     "google": "https://www.google.com",
     "microsoft": "https://www.microsoft.com",
@@ -106,44 +128,19 @@ TOP_CORPORATE_MAP = {
     "kpit": "https://www.kpit.com",
     "persistent systems": "https://www.persistent.com",
     "cyient": "https://www.cyient.com",
-    "cloudxtreme": "https://www.cloudxtreme.com",
-    "bluelight consulting": "https://www.bluelight.co",
-    "deutsche telekom digital labs": "https://www.telekom.com",
     "deutsche telekom": "https://www.telekom.com",
     "ntt data": "https://www.nttdata.com",
-    "ntt data global delivery services ltd": "https://www.nttdata.com",
-    "ntt data business solutions": "https://www.nttdata.com",
-    "artech": "https://www.artech.com",
-    "recro": "https://www.recro.io",
-    "straive": "https://www.straive.com",
-    "gyansys": "https://www.gyansys.com",
-    "xencia": "https://www.xencia.com",
-    "xencia technology solutions": "https://www.xencia.com",
-    "rapido": "https://www.rapido.bike",
-    "epam systems": "https://www.epam.com",
     "epam": "https://www.epam.com",
+    "epam systems": "https://www.epam.com",
     "kpmg": "https://www.kpmg.com",
-    "kpmg india services llp": "https://www.kpmg.com",
     "ey": "https://www.ey.com",
     "ernst & young": "https://www.ey.com",
-    "ernst & young llp ( ey india )": "https://www.ey.com",
-    "happiest minds technologies": "https://www.happiestminds.com",
     "happiest minds": "https://www.happiestminds.com",
-    "antino": "https://www.antino.com",
-    "fdm group": "https://www.fdmgroup.com",
-    "t-mobile": "https://www.t-mobile.com",
-    "datazip": "https://www.datazip.io",
-    "gsstech group": "https://www.gsstechgroup.com",
-    "hawk martech": "https://www.hawkmartech.com",
-    "nuplay ai": "https://www.nuplay.ai",
-    "oolka": "https://www.oolka.in",
-    "manifest": "https://www.manifest.com",
     "swiggy": "https://www.swiggy.com",
     "zomato": "https://www.zomato.com",
     "flipkart": "https://www.flipkart.com",
     "myntra": "https://www.myntra.com",
     "ola": "https://www.olacabs.com",
-    "phonepe": "https://www.phonepe.com",
     "paytm": "https://www.paytm.com",
     "razorpay": "https://www.razorpay.com",
     "zerodha": "https://www.zerodha.com",
@@ -159,15 +156,8 @@ TOP_CORPORATE_MAP = {
     "jio": "https://www.jio.com",
     "airtel": "https://www.airtel.in",
     "vodafone": "https://www.vodafone.com",
-    "citius tech": "https://www.citiustech.com",
-    "virtusa": "https://www.virtusa.com",
-    "nagarro": "https://www.nagarro.com",
-    "expleo": "https://www.expleo.com",
-    "bosh": "https://www.bosch.com",
-    "bosch global software technologies": "https://www.bosch.com",
+    "bosch": "https://www.bosch.com",
     "siemens": "https://www.siemens.com",
-    "schneider electric": "https://www.se.com",
-    "cisco systems": "https://www.cisco.com",
     "goldman sachs": "https://www.goldmansachs.com",
     "morgan stanley": "https://www.morganstanley.com",
     "jpmorgan chase": "https://www.jpmorganchase.com",
@@ -175,20 +165,69 @@ TOP_CORPORATE_MAP = {
     "standard chartered": "https://www.sc.com",
     "hsbc": "https://www.hsbc.com",
     "barclays": "https://www.barclays.com",
-    "societe generale": "https://www.societegenerale.com",
-    "ubs": "https://www.ubs.com",
     "target": "https://www.target.com",
     "walmart": "https://www.walmart.com",
-    "walmart global tech": "https://www.walmart.com"
+    "freshworks": "https://www.freshworks.com",
+    "zscaler": "https://www.zscaler.com",
+    "whatfix": "https://www.whatfix.com",
+    "sprinklr": "https://www.sprinklr.com",
+    "highradius": "https://www.highradius.com",
+    "chargebee": "https://www.chargebee.com",
+    "leadsquared": "https://www.leadsquared.com",
+    "clevertap": "https://www.clevertap.com",
+    "icertis": "https://www.icertis.com",
+    "darwinbox": "https://www.darwinbox.com",
+    "gartner": "https://www.gartner.com",
+    "hubspot": "https://www.hubspot.com",
+    "zoominfo": "https://www.zoominfo.com",
+    "datadog": "https://www.datadoghq.com",
+    "mongodb": "https://www.mongodb.com",
+    "servicenow": "https://www.servicenow.com",
+    "workday": "https://www.workday.com",
+    "stripe": "https://www.stripe.com",
+    "twilio": "https://www.twilio.com",
+    "elastic": "https://www.elastic.co",
+    "gitlab": "https://www.gitlab.com",
+    "okta": "https://www.okta.com",
+    "cloudflare": "https://www.cloudflare.com",
+    "palo alto networks": "https://www.paloaltonetworks.com",
+    "fortinet": "https://www.fortinet.com",
+    "netskope": "https://www.netskope.com",
+    "sentinelone": "https://www.sentinelone.com",
+    "splunk": "https://www.splunk.com",
+    "dynatrace": "https://www.dynatrace.com",
+    "pagerduty": "https://www.pagerduty.com",
+    "databricks": "https://www.databricks.com",
+    "uipath": "https://www.uipath.com",
+    "automation anywhere": "https://www.automationanywhere.com",
+    "notion": "https://www.notion.so",
+    "figma": "https://www.figma.com",
+    "canva": "https://www.canva.com",
+    "docusign": "https://www.docusign.com",
+    "gong": "https://www.gong.io",
+    "salesloft": "https://www.salesloft.com",
+    "outreach": "https://www.outreach.io",
+    "apollo.io": "https://www.apollo.io",
+    "cognism": "https://www.cognism.com",
+    "zoom": "https://www.zoom.us",
+    "webengage": "https://www.webengage.com",
+    "yellow.ai": "https://www.yellow.ai",
+    "haptik": "https://www.haptik.ai",
+    "uniphore": "https://www.uniphore.com",
+    "observe.ai": "https://www.observe.ai"
 }
 
 def clean_company_name(name: str) -> str:
-    if not name or str(name).lower() in ["n/a", "unknown", "confidential", "jooble employer", "foundit recruiter", "nan", "null"]:
+    if not name or str(name).lower() in ["n/a", "unknown", "confidential", "jooble employer", "foundit recruiter", "careerbuilder employer", "indeed employer", "nan", "null"]:
         return ""
-    clean = re.sub(r'(?i)\b(pvt\.?\s*ltd\.?|private\s+limited|limited|inc\.?|llc|corp\.?|corporation|gmbh|co\.?|india|services|technologies|solutions|group|labs|acceleration\s+centers)\b', '', str(name))
+    clean = re.sub(
+        r'(?i)\b(pvt\.?\s*ltd\.?|private\s+limited|limited|inc\.?|llc|corp\.?|corporation|gmbh|co\.?|india\s+private\s+limited|india\s+pvt\s+ltd|india\s+llp|india|technology\s+information|services|technologies|solutions|group|labs|pty\s+ltd|enterprises|holdings|m/s|private\s+ltd|tech|technologies\s+pvt\s+ltd|software\s+private\s+limited)\b',
+        '',
+        str(name)
+    )
     clean = re.sub(r'[\(\)\[\]\{\}]', ' ', clean)
     clean = re.sub(r'\s+', ' ', clean).strip(' ,.-')
-    return clean if clean else str(name).strip()
+    return clean if len(clean) >= 2 else str(name).strip()
 
 def load_cache() -> dict:
     cache = {}
@@ -199,7 +238,7 @@ def load_cache() -> dict:
                 for row in reader:
                     c = row.get("Company Name", "").strip().lower()
                     u = row.get("Website URL", "").strip()
-                    if c and u:
+                    if c and u and u != "N/A":
                         cache[c] = u
         except Exception:
             pass
@@ -211,24 +250,58 @@ def save_cache(cache: dict):
         writer = csv.DictWriter(f, fieldnames=["Company Name", "Website URL"])
         writer.writeheader()
         for c, u in sorted(cache.items()):
-            writer.writerow({"Company Name": c, "Website URL": u})
+            if u and u != "N/A":
+                writer.writerow({"Company Name": c, "Website URL": u})
+
+def fast_dns_check(domain: str) -> bool:
+    try:
+        socket.gethostbyname(domain)
+        return True
+    except Exception:
+        return False
 
 def verify_domain_fast(domain: str) -> bool:
-    """Quickly check if a domain responds to HTTP HEAD request."""
+    """Quickly check if a domain responds to HTTP HEAD/GET request."""
+    if not fast_dns_check(domain):
+        return False
     try:
         url = f"https://{domain}"
-        resp = requests.head(url, timeout=3, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+        resp = requests.head(url, timeout=2.5, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         return resp.status_code < 400
     except Exception:
         try:
             url = f"http://{domain}"
-            resp = requests.head(url, timeout=3, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+            resp = requests.head(url, timeout=2.5, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
             return resp.status_code < 400
         except Exception:
             return False
 
+def is_valid_company_url(url: str) -> bool:
+    if not url or not url.startswith("http"):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        domain = parsed.netloc.lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        for ex in EXCLUDED_DOMAINS:
+            if domain == ex or domain.endswith("." + ex):
+                return False
+        return bool(domain and "." in domain)
+    except Exception:
+        return False
+
+def extract_base_url(url: str) -> str:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+        return url
+    except Exception:
+        return url
+
 def resolve_single_company(company_name: str, cache: dict) -> str:
-    if not company_name or str(company_name).lower() in ["n/a", "unknown", "confidential", "jooble employer", "foundit recruiter", "nan", "null", ""]:
+    if not company_name or str(company_name).lower() in ["n/a", "unknown", "confidential", "jooble employer", "foundit recruiter", "careerbuilder employer", "indeed employer", "nan", "null", ""]:
         return "N/A"
         
     c_raw = str(company_name).strip()
@@ -238,24 +311,31 @@ def resolve_single_company(company_name: str, cache: dict) -> str:
     if c_lower in TOP_CORPORATE_MAP:
         return TOP_CORPORATE_MAP[c_lower]
         
-    # Check partial match in corporate map
+    clean = clean_company_name(c_raw)
+    clean_lower = clean.lower() if clean else c_lower
+    
+    if clean_lower in TOP_CORPORATE_MAP:
+        return TOP_CORPORATE_MAP[clean_lower]
+        
     for k, url in TOP_CORPORATE_MAP.items():
-        if k in c_lower or c_lower in k:
+        if len(k) > 3 and (k == clean_lower or f" {k} " in f" {clean_lower} " or f" {k} " in f" {c_lower} "):
             return url
             
     # 2. Check local persistent cache
     if c_lower in cache and cache[c_lower] != "N/A":
         return cache[c_lower]
+    if clean_lower in cache and cache[clean_lower] != "N/A":
+        return cache[clean_lower]
         
-    # 3. Fast Domain Heuristic (.com / .in / .io / .ai)
-    clean = clean_company_name(c_raw)
-    slug = re.sub(r'[^a-z0-9]', '', clean.lower())
+    # 3. Fast Domain Heuristic (.com / .in / .io / .ai / .co / .org / .net / .tech)
+    slug = re.sub(r'[^a-z0-9]', '', clean_lower)
     if len(slug) >= 3:
-        for tld in [".com", ".in", ".io", ".ai", ".co"]:
+        for tld in [".com", ".in", ".io", ".ai", ".co", ".org", ".net", ".tech"]:
             candidate = f"{slug}{tld}"
             if verify_domain_fast(candidate):
                 site_url = f"https://www.{candidate}"
                 cache[c_lower] = site_url
+                cache[clean_lower] = site_url
                 return site_url
 
     return "N/A"
@@ -272,7 +352,8 @@ def process_job_csv(filepath: str):
     
     # 1. Standardize 100% of dates to YYYY-MM-DD
     print("[*] 1/2 Standardizing Date Posted format to ISO YYYY-MM-DD...", flush=True)
-    df['Date Posted'] = df['Date Posted'].apply(normalize_date_posted)
+    if 'Date Posted' in df.columns:
+        df['Date Posted'] = df['Date Posted'].apply(normalize_date_posted)
     
     # 2. Resolve official company websites
     print("[*] 2/2 Resolving company website domains (Company Link)...", flush=True)
@@ -282,7 +363,7 @@ def process_job_csv(filepath: str):
     print(f"[*] Analyzing {len(unique_companies)} unique companies...", flush=True)
     
     company_site_map = {}
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=40) as executor:
         future_to_comp = {executor.submit(resolve_single_company, c, cache): c for c in unique_companies}
         for future in as_completed(future_to_comp):
             c = future_to_comp[future]
@@ -300,7 +381,7 @@ def process_job_csv(filepath: str):
     # Save CSV
     df.to_csv(filepath, index=False)
     resolved_count = (df['Company Link'] != "N/A").sum()
-    valid_dates_count = (df['Date Posted'] != "N/A").sum()
+    valid_dates_count = (df['Date Posted'] != "N/A").sum() if 'Date Posted' in df.columns else 0
     print(f"\n[++++] Processing Complete for '{filepath}'!", flush=True)
     print(f"  * Total Records       : {total_rows}", flush=True)
     print(f"  * Normalized Dates    : {valid_dates_count} / {total_rows} ({valid_dates_count/total_rows*100:.1f}%) formatted as YYYY-MM-DD", flush=True)
@@ -308,5 +389,5 @@ def process_job_csv(filepath: str):
 
 if __name__ == "__main__":
     import sys
-    target = sys.argv[1] if len(sys.argv) > 1 else "all_jobs_vvs.csv"
+    target = sys.argv[1] if len(sys.argv) > 1 else "all_sdr_26_jobs.csv"
     process_job_csv(target)

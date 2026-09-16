@@ -66,9 +66,9 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
                 }
                 if effective_loc:
                     extra_params["l"] = effective_loc
-                for k in ["experience", "salaryRange", "wfhType", "jobAge", "educationType"]:
-                    if fp.get(k):
-                        extra_params[k] = fp[k]
+                for k, v in fp.items():
+                    if k not in ["role", "location", "k", "l", "pageNo"]:
+                        extra_params[k] = v
                         
                 query_str = urllib.parse.urlencode(extra_params)
                 if formatted_location_path:
