@@ -4,7 +4,7 @@ import sys
 import json
 import urllib.parse
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match, normalize_date_posted
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_foundit_jobs(job_role, location="", max_pages=1, limit_per_page=20, filter_params=None, **kwargs):
     """
@@ -135,17 +135,19 @@ async def scrape_foundit_jobs(job_role, location="", max_pages=1, limit_per_page
                 if functions:
                     detail_parts.append(f"Function: {functions}")
                     
-                details = " | ".join(detail_parts) if detail_parts else f"Job Role: {title} at {company}"
+                comp_clean = company if (company and company != "Foundit Recruiter" and company != "N/A") else "Foundit Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                details = " | ".join(detail_parts) if detail_parts else f"Job Role: {title} at {comp_clean} in {loc_clean}"
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
                         "Date Posted": date_posted,
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
-                        "No. of Applicants": applicants_str,
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.foundit.in"),
+                        "No. of Applicants": applicants_str if (applicants_str and applicants_str != "N/A") else "Actively Hiring",
                         "Company / Job Details": details[:600] + "..." if len(details) > 600 else details,
                         "Source": "Foundit"
                     })

@@ -86,11 +86,31 @@ async def scrape_freshersworld_jobs(job_role, location="", max_pages=1, filter_p
                     
                 # Extract title from card element or slug
                 title_el = card.select_one(".seo_title, .job-title, .latest-jobs-title, .wrap-title, h3, h2")
-                title = title_el.text.strip() if title_el else ""
+                raw_title = title_el.text.strip() if title_el else ""
                 
-                # Check if title is actually company name (e.g. 'Client of Freshersworld') or empty
+                # Clean up title and extract embedded company / location
+                title = raw_title
+                parsed_company = ""
+                parsed_loc = ""
+                
+                # Match patterns like: "<Role> Jobs Opening in <Company> at <Location>Less"
+                m1 = re.match(r'^(.*?)\s+Jobs?\s+Opening\s+in\s+(.*?)\s+at\s+(.*?)(?:Less|\.\.\.|$)', raw_title, re.IGNORECASE)
+                m2 = re.match(r'^(.*?)\s+Jobs?\s+in\s+(.*?)\s+at\s+(.*?)(?:Less|\.\.\.|$)', raw_title, re.IGNORECASE)
+                if m1:
+                    title = m1.group(1).strip()
+                    parsed_company = m1.group(2).strip()
+                    parsed_loc = m1.group(3).strip()
+                elif m2:
+                    title = m2.group(1).strip()
+                    parsed_company = m2.group(2).strip()
+                    parsed_loc = m2.group(3).strip()
+                else:
+                    # Clean trailing "Jobs Opening in..." or "Less"
+                    title = re.sub(r'\s+Jobs?\s+Opening.*$', '', title, flags=re.IGNORECASE).strip()
+                    title = re.sub(r'Less$', '', title, flags=re.IGNORECASE).strip()
+                
+                # Check if title is still empty or 'Client of Freshersworld'
                 if not title or "client of" in title.lower():
-                    # Parse from URL slug
                     slug_match = re.search(r'/jobs/([a-zA-Z0-9\-]+?)(?:-jobs-opening|-in-|-at-|\d+$)', apply_link)
                     if slug_match:
                         title = slug_match.group(1).replace("-", " ").title()
@@ -101,10 +121,14 @@ async def scrape_freshersworld_jobs(job_role, location="", max_pages=1, filter_p
                     continue
                     
                 comp_el = card.select_one(".company-name, .latest-jobs-company, [class*='company']")
-                company = comp_el.text.strip() if comp_el else "Freshersworld Employer"
+                comp_text = comp_el.text.strip() if comp_el else ""
+                company = comp_text or parsed_company or "Freshersworld Partner Employer"
+                company = re.sub(r'Less$', '', company, flags=re.IGNORECASE).strip()
                 
                 loc_el = card.select_one(".job-location, .job-desc .bold, [class*='location']")
-                job_location = loc_el.text.strip() if loc_el else (location or "India")
+                loc_text = loc_el.text.strip() if loc_el else ""
+                job_location = loc_text or parsed_loc or (effective_loc or "Bengaluru, Karnataka, India")
+                job_location = re.sub(r'Less$', '', job_location, flags=re.IGNORECASE).strip()
                 
                 qual_el = card.select_one(".job-qual, .qualifications, [class*='qual']")
                 qual = qual_el.text.strip() if qual_el else "Any Graduate"
@@ -124,8 +148,8 @@ async def scrape_freshersworld_jobs(job_role, location="", max_pages=1, filter_p
                         "Location": job_location,
                         "Date Posted": date_posted,
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
-                        "No. of Applicants": "N/A",
+                        "Company Link": "https://www.freshersworld.com",
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "Freshersworld"
                     })

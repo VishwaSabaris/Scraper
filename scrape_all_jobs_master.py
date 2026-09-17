@@ -419,9 +419,9 @@ def display_portal_filter_matrix(target_portals: List[str], uf: UniversalJobFilt
     print("\n" + "=" * 80 + "\n")
 
 
-async def execute_portal_scraper(pkey: str, pinfo: Dict[str, Any], uf: UniversalJobFilter, max_pages: int) -> List[Dict[str, Any]]:
+async def execute_portal_scraper(pkey: str, pinfo: Dict[str, Any], uf: UniversalJobFilter, max_pages: int, headless: bool = False) -> List[Dict[str, Any]]:
     """
-    Executes a single portal scraper safely with adapted filter parameters and pagination.
+    Executes a single portal scraper safely with adapted filter parameters, anti-bot protection, and pagination.
     """
     pname = pinfo["name"]
     func = pinfo["func"]
@@ -436,10 +436,29 @@ async def execute_portal_scraper(pkey: str, pinfo: Dict[str, Any], uf: Universal
     
     try:
         if is_async:
-            results = await func(effective_role, effective_loc, max_pages=max_pages, filter_params=portal_params, headless=True)
+            results = await func(effective_role, effective_loc, max_pages=max_pages, filter_params=portal_params, headless=headless)
         else:
             # Synchronous function wrapper
             results = await asyncio.to_thread(func, effective_role, effective_loc, max_jobs=max_pages * 25, filter_params=portal_params)
+
+        # Smart fallback for global/remote-first portals when regional location yields 0 results
+        if len(results) == 0 and effective_loc and pkey in ["dice", "wellfound", "workable", "jobspresso", "careerbuilder", "ziprecruiter", "workatastartup", "reed", "himalayas", "remote_co"]:
+            print(f"[*] [{pname}] 0 listings found for regional location '{effective_loc}'. Retrying with global/remote scope...")
+            fallback_params = dict(portal_params)
+            fallback_params.pop("location", None)
+            fallback_params.pop("where", None)
+            fallback_params.pop("locations", None)
+            fallback_params.pop("country", None)
+            try:
+                if is_async:
+                    fallback_results = await func(effective_role, "", max_pages=max_pages, filter_params=fallback_params, headless=headless)
+                else:
+                    fallback_results = await asyncio.to_thread(func, effective_role, "", max_jobs=max_pages * 25, filter_params=fallback_params)
+                if fallback_results:
+                    print(f"[+] [{pname}] Global/remote fallback recovered {len(fallback_results)} listings.")
+                    results = fallback_results
+            except Exception as fb_err:
+                print(f"[!] [{pname}] Fallback notice: {fb_err}")
 
         return results
     except Exception as err:
@@ -447,7 +466,7 @@ async def execute_portal_scraper(pkey: str, pinfo: Dict[str, Any], uf: Universal
         return []
 
 
-async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, max_pages: int, output_file: str):
+async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, max_pages: int, output_file: str, headless: bool = False):
     """
     Orchestrates the entire scraping workflow across all selected portals.
     """
@@ -462,7 +481,7 @@ async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, 
             continue
 
         pinfo = PORTAL_REGISTRY[pkey]
-        jobs = await execute_portal_scraper(pkey, pinfo, uf, max_pages)
+        jobs = await execute_portal_scraper(pkey, pinfo, uf, max_pages, headless=headless)
         portal_counts[pinfo["name"]] = {
             "count": len(jobs),
             "region": pinfo.get("region", "Global"),
@@ -502,7 +521,7 @@ async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, 
     print("=" * 88 + "\n")
 
     if unique_jobs:
-        save_to_csv(unique_jobs, output_file)
+        save_to_csv(unique_jobs, output_file, requested_role=uf.keywords or uf.job_title, default_location=uf.location)
         print(f"[++++] Success! Saved {len(unique_jobs)} verified job records to '{output_file}'")
         
         # 1. Automatic Job Description Enrichment
@@ -549,6 +568,8 @@ def parse_cli_args():
     parser.add_argument("--pages", "-n", type=int, default=3, help="Max pages per portal (default: 3)")
     parser.add_argument("--output", "-o", default="all_jobs_master_extracted.csv", help="Output CSV filename")
     parser.add_argument("--interactive", "-i", action="store_true", help="Launch interactive filter setup questionnaire")
+
+    parser.add_argument("--headless", action="store_true", default=False, help="Run browser scrapers in headless mode (default: False to bypass anti-bot challenges)")
 
     return parser.parse_args()
 
@@ -616,7 +637,7 @@ def main():
         output_file = args.output
 
     # Run the Master Scraper Engine
-    asyncio.run(run_master_scraper(target_portals, uf, max_pages, output_file))
+    asyncio.run(run_master_scraper(target_portals, uf, max_pages, output_file, headless=args.headless))
 
 
 if __name__ == "__main__":

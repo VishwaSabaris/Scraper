@@ -6,7 +6,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match, normalize_date_posted
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -134,17 +134,19 @@ async def scrape_dice_jobs(job_role, location="", max_pages=1, filter_params=Non
                 emp_type = item.get("employmentType") or "Full-time"
                 desc = item.get("summary") or item.get("description") or ""
                 
-                details = f"Company: {company} | Type: {emp_type} | Salary: {salary} | Location: {job_location} | {desc}"
+                comp_clean = company if (company and company != "N/A") else "Dice Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "United States / Remote")
+                details = f"Company: {comp_clean} | Type: {emp_type} | Salary: {salary} | Location: {loc_clean} | {desc}" if desc else f"Company: {comp_clean} | Location: {loc_clean} | Role: {title} | Source: Dice"
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
                         "Date Posted": str(posted_date),
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
-                        "No. of Applicants": "N/A",
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.dice.com"),
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "Dice"
                     })

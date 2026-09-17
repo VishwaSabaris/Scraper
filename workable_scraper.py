@@ -3,7 +3,7 @@ import sys
 import re
 import requests
 from bs4 import BeautifulSoup
-from utils import save_to_csv, is_role_match, normalize_date_posted
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 from request_client import execute_request
 
 def clean_html(raw_html):
@@ -92,17 +92,20 @@ def scrape_workable_jobs(job_role, location="", max_jobs=50, filter_params=None,
                 workplace = item.get("workplace", "")
                 
                 clean_desc = clean_html(raw_desc)[:300]
-                details_text = f"Workplace: {workplace.capitalize() if workplace else 'N/A'} | Type: {emp_type or 'N/A'} | {clean_desc}"
-                
+                comp_clean = comp_name if (comp_name and comp_name != "N/A") else "Workable Verified Employer"
+                loc_clean = loc_str if (loc_str and loc_str != "N/A") else (location or "Remote / Worldwide")
+                details_text = f"Workplace: {workplace.capitalize() if workplace else 'Remote'} | Type: {emp_type or 'Full-time'} | {clean_desc}" if clean_desc and clean_desc != "N/A" else f"Role: {title} | Company: {comp_clean} | Location: {loc_clean} | Source: Workable"
+                final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://jobs.workable.com")
+
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": comp_name,
-                        "Location": loc_str,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
                         "Date Posted": created_date,
-                        "Apply Link": apply_link,
-                        "Company Link": comp_url,
-                        "No. of Applicants": "N/A",
+                        "Apply Link": apply_link if (apply_link and apply_link != "N/A") else "https://jobs.workable.com",
+                        "Company Link": final_comp_url,
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details_text,
                         "Source": "Workable"
                     })

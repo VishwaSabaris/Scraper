@@ -242,11 +242,18 @@ def enrich_job_csv(csv_path: str, max_workers: int = 15):
             except Exception:
                 pass
 
-    # Save back to CSV
+    # Save back to CSV with universal sanitization
+    from utils import sanitize_job_record
+    cleaned_records = [sanitize_job_record(r) for r in records]
+    canonical_headers = [
+        "Job Role", "Company Name", "Location", "Date Posted",
+        "Apply Link", "Company Link", "No. of Applicants",
+        "Company / Job Details", "Source"
+    ]
     with open(csv_path, mode="w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=canonical_headers)
         writer.writeheader()
-        writer.writerows(records)
+        writer.writerows(cleaned_records)
 
     print(f"[++++] Description Enrichment Complete! Successfully enriched {enriched_count} / {len(records)} records with full job descriptions.")
 

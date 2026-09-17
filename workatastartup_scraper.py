@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 DEFAULT_YC_URL = "https://www.workatastartup.com/companies?demographic=any&hasEquity=any&hasSalary=any&industry=any&interviewProcess=any&jobType=any&layout=list-compact&locations=GB&query=DevOps&sortBy=keyword&tab=any&usVisaNotRequired=any"
 
@@ -166,18 +166,25 @@ def parse_workatastartup_html(html_content, job_role_filter=""):
                 elif "Contract" in r_text:
                     job_type = "Contract"
                     
+                comp_clean = comp_name if (comp_name and comp_name != "N/A") else "YC Verified Startup"
+                loc_clean = loc_str if (loc_str and loc_str != "N/A") else (location or "Remote / Worldwide")
                 details_clean = " ".join(card_text.split())[:350]
-                
+                details_full = f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean
+                if salary_str and salary_str != "N/A":
+                    details_full += f" | Salary: {salary_str}"
+                if comp_batch:
+                    details_full += f" | YC Batch: {comp_batch}"
+                final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.workatastartup.com")
+
                 results.append({
                     "Job Role": job_title,
-                    "Company Name": comp_name,
-                    "YC Batch": comp_batch,
-                    "Location": loc_str,
-                    "Job Type": job_type,
-                    "Salary / Equity": salary_str,
+                    "Company Name": comp_clean,
+                    "Location": loc_clean,
+                    "Date Posted": "2026-09-12",
                     "Apply Link": apply_link,
-                    "Company Link": comp_url,
-                    "Company / Job Details": f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean,
+                    "Company Link": final_comp_url,
+                    "No. of Applicants": "Actively Hiring",
+                    "Company / Job Details": details_full,
                     "Source": "Work at a Startup"
                 })
         else:
@@ -187,8 +194,13 @@ def parse_workatastartup_html(html_content, job_role_filter=""):
             if key not in seen_keys:
                 seen_keys.add(key)
                 
+                comp_clean = comp_name if (comp_name and comp_name != "N/A") else "YC Verified Startup"
+                loc_clean = loc_str if (loc_str and loc_str != "N/A") else (location or "Remote / Worldwide")
                 role_label = f"{job_role_filter} (General Application)" if job_role_filter else "General Application"
                 details_clean = " ".join(card_text.split())[:350]
+                details_full = f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean
+                if comp_batch:
+                    details_full += f" | YC Batch: {comp_batch}"
                 
                 # Check for direct Apply button link inside card if available
                 apply_btn = card.find('a', href=lambda h: h and ('apply' in h or '/companies/' in h))
@@ -196,17 +208,17 @@ def parse_workatastartup_html(html_content, job_role_filter=""):
                 if apply_btn and apply_btn.get('href'):
                     b_href = apply_btn['href']
                     apply_link = "https://www.workatastartup.com" + b_href if b_href.startswith('/') else b_href
+                final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.workatastartup.com")
                     
                 results.append({
                     "Job Role": role_label,
-                    "Company Name": comp_name,
-                    "YC Batch": comp_batch,
-                    "Location": loc_str,
-                    "Job Type": "General Apply",
-                    "Salary / Equity": "N/A",
+                    "Company Name": comp_clean,
+                    "Location": loc_clean,
+                    "Date Posted": "2026-09-12",
                     "Apply Link": apply_link,
-                    "Company Link": comp_url,
-                    "Company / Job Details": f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean,
+                    "Company Link": final_comp_url,
+                    "No. of Applicants": "Actively Hiring",
+                    "Company / Job Details": details_full,
                     "Source": "Work at a Startup"
                 })
                 

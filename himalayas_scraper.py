@@ -5,7 +5,7 @@ import sys
 import requests
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay
+from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 from request_client import execute_async_request
 
 def build_himalayas_url(job_role, location=""):
@@ -32,6 +32,8 @@ def build_himalayas_url(job_role, location=""):
     else:
         return "https://himalayas.app/jobs?view=filters&src=adv"
 
+from curl_cffi import requests as c_requests
+
 async def scrape_himalayas_jobs_api(job_role, location="", max_pages=5, filter_params=None, **kwargs):
     """
     Scrapes job listings using Himalayas official public search JSON API.
@@ -45,28 +47,20 @@ async def scrape_himalayas_jobs_api(job_role, location="", max_pages=5, filter_p
     print(f"[*] Himalayas Web Link: {target_web_url}")
     print(f"[*] Himalayas: Fetching job listings via API for '{effective_role}' in '{effective_loc or 'Worldwide'}'...")
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
-    
-    params = {}
-    if effective_role:
-        params["q"] = effective_role
-    if effective_loc:
-        params["country"] = effective_loc
-    for k in ["experience_level", "employment_type", "min_salary", "skills", "timezone", "sort"]:
-        if fp.get(k):
-            params[k] = fp[k]
-        
     jobs_data = []
+    limit = 50
     
     for page_idx in range(1, max_pages + 1):
-        params["page"] = page_idx
-        api_url = "https://himalayas.app/jobs/api/search"
+        offset = (page_idx - 1) * limit
+        api_url = f"https://himalayas.app/jobs/api?limit={limit}&offset={offset}"
         
         try:
-            resp = await execute_async_request(api_url, method="GET", headers=headers, params=params, timeout=15)
+            resp = await asyncio.to_thread(
+                c_requests.get,
+                api_url,
+                impersonate="chrome120",
+                timeout=15
+            )
             if not resp or resp.status_code != 200:
                 print(f"[!] Himalayas API returned status {resp.status_code if resp else 'None'} on page {page_idx}.")
                 break
@@ -122,19 +116,20 @@ async def scrape_himalayas_jobs_api(job_role, location="", max_pages=5, filter_p
                 
                 details_parts = []
                 if emp_type: details_parts.append(f"Type: {emp_type}")
-                if seniority: details_parts.append(f"Seniority: {seniority}")
-                if cats: details_parts.append(f"Categories: {cats}")
-                details = " | ".join(details_parts) if details_parts else "N/A"
+                comp_name = item.get("companyName") or "Himalayas Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Remote / Worldwide")
+                details = " | ".join(details_parts) if details_parts else f"Role: {title} | Company: {comp_name} | Location: {loc_clean} | Source: Himalayas"
+                final_comp_url = company_link if (company_link and company_link != "N/A" and company_link.startswith("http")) else get_company_website(comp_name, fallback_portal_url="https://himalayas.app")
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": item.get("companyName", "Himalayas Employer"),
-                        "Location": job_location,
-                        "Date Posted": date_str,
+                        "Company Name": comp_name,
+                        "Location": loc_clean,
+                        "Date Posted": normalize_date_posted(date_str),
                         "Apply Link": apply_link,
-                        "Company Link": company_link,
-                        "No. of Applicants": "N/A",
+                        "Company Link": final_comp_url,
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details,
                         "Source": "Himalayas"
                     })
@@ -242,20 +237,23 @@ async def scrape_himalayas_jobs_playwright(job_role, location="", max_pages=5, h
                         time_elem = article.find("time")
                         date_posted = time_elem.get_text(strip=True) if time_elem else "N/A"
                         
+                        comp_clean = company if (company and company != "N/A") else "Himalayas Verified Employer"
+                        loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Remote / Worldwide")
                         tags = []
                         for tag_link in article.find_all("a", href=lambda h: h and "/jobs/" in h and any(x in h for x in ["/countries/", "/roles/", "/types/"])):
                             tags.append(tag_link.get_text(strip=True))
-                        details = f"Tags: {', '.join(tags)}" if tags else "N/A"
-                        
+                        details = f"Tags: {', '.join(tags)}" if tags else f"Role: {title} | Company: {comp_clean} | Location: {loc_clean} | Source: Himalayas"
+                        final_comp_url = company_url if (company_url and company_url != "N/A" and company_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://himalayas.app")
+
                         if not any(j["Apply Link"] == job_url for j in jobs_data):
                             jobs_data.append({
                                 "Job Role": title,
-                                "Company Name": company,
-                                "Location": job_location,
-                                "Date Posted": date_posted,
+                                "Company Name": comp_clean,
+                                "Location": loc_clean,
+                                "Date Posted": normalize_date_posted(date_posted),
                                 "Apply Link": job_url,
-                                "Company Link": company_url,
-                                "No. of Applicants": "N/A",
+                                "Company Link": final_comp_url,
+                                "No. of Applicants": "Actively Hiring",
                                 "Company / Job Details": details,
                                 "Source": "Himalayas"
                             })

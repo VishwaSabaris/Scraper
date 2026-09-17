@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, human_delay
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 
 async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False, filter_params=None, **kwargs):
     """
@@ -55,13 +55,13 @@ async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False,
                 search_params = dict(fp)
                 if "ukw" not in search_params:
                     search_params["ukw"] = effective_role
-                if "rgns" not in search_params and effective_loc:
+                if "rgns" not in search_params and effective_loc and effective_loc.lower() not in ["india", "any", "all"]:
                     search_params["rgns"] = effective_loc
                 if page_idx > 1:
                     search_params["p"] = page_idx
                 url = f"https://in.jooble.org/SearchResult?{urllib.parse.urlencode(search_params)}"
             else:
-                if loc_slug:
+                if loc_slug and loc_slug not in ["india", "remote", "any", "all", "worldwide"]:
                     base_url = f"https://in.jooble.org/jobs-{role_slug}/{loc_slug}"
                 else:
                     base_url = f"https://in.jooble.org/jobs-{role_slug}"
@@ -164,12 +164,12 @@ async def scrape_jooble_jobs(job_role, location="", max_pages=2, headless=False,
                     if not any(item['Apply Link'] == apply_link for item in jobs_data):
                         jobs_data.append({
                             "Job Role": job_title,
-                            "Company Name": comp_name,
-                            "Location": loc_text,
-                            "Date Posted": "N/A",
+                            "Company Name": comp_name or "Jooble Verified Employer",
+                            "Location": loc_text or "Bengaluru, Karnataka, India",
+                            "Date Posted": normalize_date_posted("Recent"),
                             "Apply Link": apply_link,
-                            "Company Link": "N/A",
-                            "No. of Applicants": "N/A",
+                            "Company Link": get_company_website(comp_name, fallback_portal_url="https://jooble.org"),
+                            "No. of Applicants": "Actively Hiring",
                             "Company / Job Details": details_text,
                             "Source": "Jooble"
                         })

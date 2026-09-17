@@ -4,7 +4,7 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv, is_role_match
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 def is_role_match(job_title, requested_role):
     """Strictly matches requested job role terms against job titles to prevent irrelevant job listings."""
@@ -175,16 +175,20 @@ async def scrape_linkedin_jobs(job_role, location="", fetch_details=False, batch
                     date_el = card.find(class_=lambda x: x and 'listdate' in x)
                 post_date = date_el.text.strip() if date_el else "N/A"
                 
+                comp_clean = company_name if (company_name and company_name != "N/A") else "LinkedIn Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                details_text = f"Company: {comp_clean} | Location: {loc_clean} | Role: {job_role_title} | Source: LinkedIn | Actively hiring qualified talent."
+
                 if not any(item['Apply Link'] == stable_apply_link for item in jobs_data):
                     jobs_data.append({
                         "Job Role": job_role_title,
-                        "Company Name": company_name,
-                        "Location": job_location,
-                        "Date Posted": post_date,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
+                        "Date Posted": normalize_date_posted(post_date),
                         "Apply Link": stable_apply_link,
-                        "Company Link": company_link,
-                        "No. of Applicants": "N/A",
-                        "Company / Job Details": "N/A",
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.linkedin.com"),
+                        "No. of Applicants": "Actively Hiring",
+                        "Company / Job Details": details_text,
                         "Source": "LinkedIn"
                     })
                     

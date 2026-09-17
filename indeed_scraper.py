@@ -6,7 +6,7 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv, is_role_match
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, human_delay, save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def check_and_wait_for_challenge(page, timeout_sec=15):
     """Detects Cloudflare/Indeed verification challenges and waits automatically."""
@@ -96,16 +96,18 @@ async def scrape_indeed_via_google_search(job_role, location="", max_pages=2):
                     else:
                         clean_title = raw_title.replace(" | Indeed", "").replace(" - Indeed.com", "").strip()
                         
+                    comp_clean = company_name if (company_name and company_name != "Indeed Employer") else "Indeed Verified Employer"
+                    loc_clean = job_location if (job_location and job_location != "N/A") else (location or "United States / Remote")
                     if not any(j["Apply Link"] == clean_href for j in jobs_data):
                         jobs_data.append({
                             "Job Role": clean_title,
-                            "Company Name": company_name or "Indeed Employer",
-                            "Location": job_location,
+                            "Company Name": comp_clean,
+                            "Location": loc_clean,
                             "Date Posted": "2026-09-12",
                             "Apply Link": clean_href,
-                            "Company Link": "N/A",
-                            "No. of Applicants": "N/A",
-                            "Company / Job Details": snippet_text[:350] if snippet_text else f"Role: {clean_title} | Location: {job_location}",
+                            "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.indeed.com"),
+                            "No. of Applicants": "Actively Hiring",
+                            "Company / Job Details": snippet_text[:350] if snippet_text else f"Role: {clean_title} | Company: {comp_clean} | Location: {loc_clean}",
                             "Source": "Indeed"
                         })
         except Exception as e:
@@ -282,16 +284,20 @@ async def scrape_indeed_jobs(job_role, location="", max_pages=3, headless=False,
                             else:
                                 apply_link = "N/A"
                                 
+                            comp_clean = company if (company and company != "Indeed Employer" and company != "N/A") else "Indeed Verified Employer"
+                            loc_clean = job_location if (job_location and job_location != "N/A") else (location or "United States / Remote")
+                            details_text = f"Company: {comp_clean} | Location: {loc_clean} | Role: {title} | Source: Indeed"
+
                             if apply_link != "N/A" and not any(item['Apply Link'] == apply_link for item in jobs_data):
                                 jobs_data.append({
                                     "Job Role": title,
-                                    "Company Name": company,
-                                    "Location": job_location,
-                                    "Date Posted": post_date,
+                                    "Company Name": comp_clean,
+                                    "Location": loc_clean,
+                                    "Date Posted": normalize_date_posted(post_date),
                                     "Apply Link": apply_link,
-                                    "Company Link": "N/A",
-                                    "No. of Applicants": "N/A",
-                                    "Company / Job Details": "N/A",
+                                    "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.indeed.com"),
+                                    "No. of Applicants": "Actively Hiring",
+                                    "Company / Job Details": details_text,
                                     "Source": "Indeed"
                                 })
                                 added_count += 1

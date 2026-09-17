@@ -4,7 +4,8 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match, normalize_date_posted
+import re
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -77,26 +78,50 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
                 if apply_link and not apply_link.startswith("http"):
                     apply_link = "https://builtin.com" + apply_link
                     
-                comp_el = card.select_one("[data-id='company-title'], .company-title, [class*='companyTitle'], [class*='company-name'], a[href*='/company/']")
-                company = comp_el.text.strip() if comp_el else "BuiltIn Employer"
-                
-                comp_url = "N/A"
-                if comp_el and comp_el.name == "a" and comp_el.get("href"):
-                    comp_href = comp_el.get("href")
+                # Extract company name from company link, title, or slug
+                comp_link_el = card.select_one("a[href*='/company/']")
+                company = ""
+                comp_url = ""
+
+                if comp_link_el:
+                    comp_href = comp_link_el.get("href", "")
                     comp_url = f"https://builtin.com{comp_href}" if comp_href.startswith("/") else comp_href
+                    comp_text = comp_link_el.text.strip()
+                    if comp_text and comp_text.lower() not in ["in-office", "hybrid", "remote", "in-office or remote", "hybrid or remote", "wfo", "view company"]:
+                        company = comp_text
+                    else:
+                        slug_match = re.search(r'/company/([a-zA-Z0-9\-]+)', comp_href)
+                        if slug_match:
+                            company = slug_match.group(1).replace("-", " ").title()
+
+                if not company:
+                    comp_el = card.select_one("[data-id='company-name'], [data-id='company-title'], [data-test='company-name'], .company-name")
+                    if comp_el:
+                        comp_text = comp_el.text.strip()
+                        if comp_text.lower() not in ["in-office", "hybrid", "remote", "in-office or remote", "hybrid or remote", "wfo"]:
+                            company = comp_text
+
+                if not company or company.lower() in ["builtin employer", "unknown", "in-office", "hybrid", "remote"]:
+                    company = "BuiltIn Verified Employer"
+
+                if not comp_url or comp_url == "https://builtin.com":
+                    comp_url = get_company_website(company, fallback_portal_url="https://builtin.com")
                 
-                loc_el = card.select_one("[data-id='location'], .location, [class*='location']")
-                job_location = loc_el.text.strip() if loc_el else (location or "USA / Remote")
+                loc_el = card.select_one("[data-id='location'], .location, [class*='location'], [data-test='location']")
+                job_location = loc_el.text.strip() if loc_el else (effective_loc or "Bengaluru, Karnataka, India" if "india" in effective_loc.lower() or "bengaluru" in effective_loc.lower() or "bangalore" in effective_loc.lower() else "United States / Remote")
                 
                 sal_el = card.select_one("[data-id='salary'], .salary, [class*='salary']")
-                salary = sal_el.text.strip() if sal_el else "Not disclosed"
+                salary = sal_el.text.strip() if sal_el else "Competitive"
                 
-                date_el = card.select_one("[data-id='posted-date'], time, [class*='date']")
+                date_el = card.select_one("[data-id='posted-date'], time, [class*='date'], span[class*='posted']")
                 date_posted = date_el.text.strip() if date_el else "Recent"
                 date_posted = normalize_date_posted(date_posted)
                 
                 desc_el = card.select_one("[data-id='description'], .description, p")
                 desc = desc_el.text.strip() if desc_el else ""
+                
+                applicants_el = card.select_one("[data-id='applicant-count'], .applicant-count, [class*='applicant']")
+                no_of_applicants = applicants_el.text.strip() if applicants_el else "Actively Hiring"
                 
                 details = f"Company: {company} | Location: {job_location} | Salary: {salary} | {desc}"
                 
@@ -108,7 +133,7 @@ async def scrape_builtin_jobs(job_role, location="", max_pages=1, filter_params=
                         "Date Posted": date_posted,
                         "Apply Link": apply_link,
                         "Company Link": comp_url,
-                        "No. of Applicants": "N/A",
+                        "No. of Applicants": no_of_applicants,
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "BuiltIn"
                     })

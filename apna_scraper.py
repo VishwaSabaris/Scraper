@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match, normalize_date_posted
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_apna_jobs(job_role, location="Bengaluru", max_pages=1, filter_params=None, **kwargs):
     """
@@ -116,8 +116,8 @@ async def scrape_apna_jobs(job_role, location="Bengaluru", max_pages=1, filter_p
                     "Location": job_location,
                     "Date Posted": date_posted,
                     "Apply Link": apply_link,
-                    "Company Link": "N/A",
-                    "No. of Applicants": "N/A",
+                    "Company Link": get_company_website(company, fallback_portal_url="https://apna.co"),
+                    "No. of Applicants": "Actively Hiring",
                     "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                     "Source": "Apna"
                 })

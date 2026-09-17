@@ -347,7 +347,7 @@ async def main():
 
         # Save to CSV
         if all_results:
-            save_to_csv(all_results, output_file)
+            save_to_csv(all_results, output_file, requested_role=role, default_location=location)
 
             # Resolve company websites
             if resolve_websites and os.path.exists(output_file) and os.path.getsize(output_file) > 0:

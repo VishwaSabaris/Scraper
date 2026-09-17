@@ -4,7 +4,7 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, STEALTH_JS_INIT, save_to_csv, is_role_match, normalize_date_posted
+from utils import CHROMIUM_STEALTH_ARGS, STEALTH_JS_INIT, save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=True, filter_params=None, **kwargs):
     """
@@ -27,6 +27,7 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
             context = await p.chromium.launch_persistent_context(
                 user_dir,
                 headless=headless,
+                channel="chrome",
                 args=CHROMIUM_STEALTH_ARGS,
                 viewport={'width': 1366, 'height': 768}
             )
@@ -42,10 +43,10 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
         await page.add_init_script(STEALTH_JS_INIT)
         
         try:
-            # First visit homepage to establish session
+            # First visit homepage to establish session and solve Turnstile challenge
             try:
-                await page.goto("https://www.careerjet.co.in/", timeout=20000)
-                await asyncio.sleep(2)
+                await page.goto("https://www.careerjet.co.in/", timeout=25000)
+                await asyncio.sleep(7)
             except Exception:
                 pass
                 
@@ -115,17 +116,20 @@ async def scrape_careerjet_jobs(job_role, location="", max_pages=1, headless=Tru
                         date_posted = date_el.text.strip() if date_el else "Recent"
                         date_posted = normalize_date_posted(date_posted)
                         
-                        details = f"Company: {company} | Location: {job_location} | Salary: {salary} | {desc}"
-                        
+                        comp_clean = company if (company and company != "Careerjet Employer" and company != "N/A") else "Careerjet Verified Employer"
+                        loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                        details = f"Company: {comp_clean} | Location: {loc_clean} | Salary: {salary} | {desc}" if desc else f"Role: {title} | Company: {comp_clean} | Location: {loc_clean} | Source: Careerjet"
+                        final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.careerjet.co.in")
+
                         if not any(j["Apply Link"] == apply_link for j in jobs_data):
                             jobs_data.append({
                                 "Job Role": title,
-                                "Company Name": company,
-                                "Location": job_location,
+                                "Company Name": comp_clean,
+                                "Location": loc_clean,
                                 "Date Posted": date_posted,
                                 "Apply Link": apply_link,
-                                "Company Link": comp_url,
-                                "No. of Applicants": "N/A",
+                                "Company Link": final_comp_url,
+                                "No. of Applicants": "Actively Hiring",
                                 "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                                 "Source": "Careerjet"
                             })

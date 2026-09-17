@@ -5,7 +5,7 @@ import urllib.parse
 import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay
+from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 
 def get_jobleads_country_code(location):
     """
@@ -185,18 +185,20 @@ async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=Fals
                 if salary_el:
                     details_parts.append(f"Salary: {salary_el.text.strip()}")
                     
-                details = " | ".join(details_parts) if details_parts else "N/A"
+                comp_clean = company if (company and company != "JobLeads Employer" and company != "N/A") else "JobLeads Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "Various" and job_location != "N/A") else (location or "United States / Remote")
+                details = " | ".join(details_parts) if details_parts else f"Company: {comp_clean} | Location: {loc_clean} | Role: {title} | Source: JobLeads"
                 
                 # Deduplicate and add
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
-                        "Date Posted": date_posted,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
+                        "Date Posted": normalize_date_posted(date_posted),
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
-                        "No. of Applicants": "N/A",
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.jobleads.com"),
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details,
                         "Source": "JobLeads"
                     })

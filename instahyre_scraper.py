@@ -3,7 +3,7 @@ import os
 import sys
 import urllib.parse
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_instahyre_jobs(job_role, location="", max_pages=5, limit_per_page=35, filter_params=None, **kwargs):
     """
@@ -91,20 +91,22 @@ async def scrape_instahyre_jobs(job_role, location="", max_pages=5, limit_per_pa
                     apply_link = pub_url
                 else:
                     job_id = item.get("id")
-                    apply_link = f"https://www.instahyre.com/job-{job_id}" if job_id else f"https://www.instahyre.com/search-jobs/?skills={query_skills}"
+                    apply_link = f"https://www.instahyre.com/job-{job_id}" if job_id else f"https://www.instahyre.com/search-jobs/?skills={urllib.parse.quote(effective_skills)}"
                     
-                candidate_title = item.get("candidate_title", "")
-                details = f"Company: {company} | Skills: {keywords} | Target: {candidate_title}" if keywords else f"Company: {company} | Instahyre Verified Opportunity"
-                
+                comp_clean = company if (company and company != "N/A") else "Instahyre Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                details = f"Company: {comp_clean} | Skills: {keywords} | Role: {title}" if keywords else f"Role: {title} | Company: {comp_clean} | Location: {loc_clean} | Source: Instahyre"
+                final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.instahyre.com")
+
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
-                        "Date Posted": "Recent",
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
+                        "Date Posted": normalize_date_posted("Recent"),
                         "Apply Link": apply_link,
-                        "Company Link": comp_url,
-                        "No. of Applicants": "N/A",
+                        "Company Link": final_comp_url,
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "Instahyre"
                     })

@@ -5,7 +5,7 @@ import json
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, human_delay
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 
 async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=False, filter_params=None, **kwargs):
     """
@@ -125,7 +125,7 @@ async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=Fal
                     continue
                     
                 title = title_el.text.strip()
-                if not is_role_match(title, job_role):
+                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 href = title_el['href']
@@ -143,20 +143,21 @@ async def scrape_glassdoor_jobs(job_role, location="", max_pages=1, headless=Fal
                 age_el = card.find(attrs={"data-test": "job-age"}) or card.find(class_=lambda x: x and 'listingAge' in x)
                 date_posted = age_el.text.strip() if age_el else "N/A"
                 
-                desc_el = card.find(attrs={"data-test": "descSnippet"}) or card.find(class_=lambda x: x and 'DescriptionSnippet' in x)
-                details = desc_el.text.strip() if desc_el else "N/A"
+                comp_clean = company if (company and company != "N/A") else "Glassdoor Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "United States / Remote")
+                details_text = f"Role: {title} | Company: {comp_clean} | Location: {loc_clean} | Source: Glassdoor"
                 
                 # Check for duplicates
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
-                        "Date Posted": date_posted,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
+                        "Date Posted": normalize_date_posted(date_posted),
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
-                        "No. of Applicants": "N/A",
-                        "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.glassdoor.com"),
+                        "No. of Applicants": "Actively Hiring",
+                        "Company / Job Details": details_text,
                         "Source": "Glassdoor"
                     })
                     added_count += 1

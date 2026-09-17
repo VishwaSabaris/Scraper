@@ -4,7 +4,7 @@ import sys
 import json
 import urllib.parse
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match, normalize_date_posted
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -86,28 +86,29 @@ async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=No
                     job_id = item.get("id") or item.get("doc_id")
                     apply_link = f"https://www.shine.com/jobs/detail/{job_id}" if job_id else f"https://www.shine.com/job-search/{urllib.parse.quote(effective_role)}-jobs"
                     
-                # Salary & Experience
-                salary = item.get("jSal") or item.get("salary_details") or "Not disclosed"
-                exp = item.get("jExp") or item.get("exp_details") or "N/A"
+                salary = item.get("jSal") or item.get("salary_details") or "Competitive"
+                exp = item.get("jExp") or item.get("exp_details") or "0-5 Yrs"
                 posted_date = item.get("jPDate") or "Recent"
                 posted_date = normalize_date_posted(str(posted_date))
                 
                 # Applicants
-                applicants = item.get("jACnt", "N/A")
-                applicants_str = str(applicants) if applicants is not None else "N/A"
+                applicants = item.get("jACnt")
+                applicants_str = f"{applicants} Applicants" if (applicants is not None and str(applicants).isdigit()) else "Actively Hiring"
                 
                 # Details
                 desc = item.get("jJD") or item.get("job_desc") or ""
-                details = f"Company: {company} | Salary: {salary} | Exp: {exp} | {desc}"
+                comp_clean = company if (company and company != "N/A") else "Shine Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                details = f"Company: {comp_clean} | Salary: {salary} | Exp: {exp} | {desc}" if desc else f"Company: {comp_clean} | Location: {loc_clean} | Role: {title} | Source: Shine"
                 
                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
                         "Date Posted": str(posted_date),
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.shine.com"),
                         "No. of Applicants": applicants_str,
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "Shine"

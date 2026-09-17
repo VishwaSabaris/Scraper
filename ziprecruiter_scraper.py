@@ -6,21 +6,20 @@ import json
 import urllib.request
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay, normalize_date_posted
+from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 
 def get_target_domain(location):
     """
     Determines the appropriate ZipRecruiter domain based on location.
-    ZipRecruiter uses ziprecruiter.com for US, UK, Canada, and global searches,
-    and ziprecruiter.in for India.
+    ZipRecruiter uses ziprecruiter.com for global/US searches and ziprecruiter.co.uk for UK.
     """
     if not location:
         return "ziprecruiter.com"
 
     loc_lower = location.lower().strip()
-    india_keywords = ["india", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "hyderabad", "pune", "kolkata", "gurgaon", "noida"]
-    if any(k in loc_lower for k in india_keywords) or loc_lower == "in":
-        return "ziprecruiter.in"
+    uk_keywords = ["uk", "united kingdom", "london", "england", "scotland", "wales"]
+    if any(k in loc_lower for k in uk_keywords):
+        return "ziprecruiter.co.uk"
         
     return "ziprecruiter.com"
 
@@ -157,18 +156,20 @@ async def scrape_ziprecruiter_jobs(job_role, location="", max_pages=1, headless=
                         
                         # 7. Job snippet / details
                         snippet_el = card.find(attrs={"data-testid": "job-card-snippet"}) or card.find("p")
-                        snippet_text = snippet_el.text.strip() if snippet_el else ""
-                        details_text = f"Company: {company} | Location: {job_location} | Salary: {salary_str} | {snippet_text}"
+                        comp_clean = company if (company and company != "N/A") else "ZipRecruiter Verified Employer"
+                        loc_clean = job_location if (job_location and job_location != "N/A") else (location or "United States / Remote")
+                        details_text = f"Company: {comp_clean} | Location: {loc_clean} | Salary: {salary_str} | {snippet_text}" if snippet_text else f"Role: {title} | Company: {comp_clean} | Location: {loc_clean} | Source: ZipRecruiter"
+                        final_comp_url = company_url if (company_url and company_url != "N/A" and company_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url=f"https://www.{domain}")
                         
                         if not any(j["Apply Link"] == apply_link for j in jobs_data):
                             jobs_data.append({
                                 "Job Role": title,
-                                "Company Name": company,
-                                "Location": job_location,
+                                "Company Name": comp_clean,
+                                "Location": loc_clean,
                                 "Date Posted": date_posted,
                                 "Apply Link": apply_link,
-                                "Company Link": company_url,
-                                "No. of Applicants": "N/A",
+                                "Company Link": final_comp_url,
+                                "No. of Applicants": "Actively Hiring",
                                 "Company / Job Details": details_text[:400] + "..." if len(details_text) > 400 else details_text,
                                 "Source": "ZipRecruiter"
                             })

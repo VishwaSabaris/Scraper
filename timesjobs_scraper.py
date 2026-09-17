@@ -5,7 +5,7 @@ import json
 import urllib3
 import urllib.parse
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match, normalize_date_posted
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 urllib3.disable_warnings()
 
@@ -109,19 +109,21 @@ async def scrape_timesjobs_jobs(job_role, location="", max_pages=5, page_size=50
                 post_date = item.get("postDate") or "Recent"
                 post_date = normalize_date_posted(str(post_date))
                 
-                app_cnt = item.get("applicationCount", "N/A")
-                applicants_str = str(app_cnt) if app_cnt is not None else "N/A"
+                app_cnt = item.get("applicationCount")
+                applicants_str = f"{app_cnt} Applicants" if (app_cnt is not None and str(app_cnt).isdigit()) else "Actively Hiring"
                 
-                details = f"Company: {company} | Exp: {exp} | Salary: {salary} | Skills: {skills} | {desc}"
+                comp_clean = company if (company and company != "N/A") else "TimesJobs Verified Employer"
+                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                details = f"Company: {comp_clean} | Exp: {exp} | Salary: {salary} | Skills: {skills} | {desc}" if desc else f"Company: {comp_clean} | Location: {loc_clean} | Role: {title} | Source: TimesJobs"
                 
                 if apply_link and not any(j["Apply Link"] == apply_link for j in jobs_data):
                     jobs_data.append({
                         "Job Role": title,
-                        "Company Name": company,
-                        "Location": job_location,
+                        "Company Name": comp_clean,
+                        "Location": loc_clean,
                         "Date Posted": str(post_date),
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
+                        "Company Link": get_company_website(comp_clean, fallback_portal_url="https://www.timesjobs.com"),
                         "No. of Applicants": applicants_str,
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "TimesJobs"

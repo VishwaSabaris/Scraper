@@ -118,7 +118,7 @@ def main():
         out_file = args.output or f"{args.portal}_jobs.csv"
         
     if results:
-        save_to_csv(results, out_file)
+        save_to_csv(results, out_file, requested_role=args.role, default_location=args.location)
         print(f"\n[++++] Successfully saved {len(results)} jobs to '{out_file}'!")
     else:
         print("\n[-] No matching jobs found to save.")

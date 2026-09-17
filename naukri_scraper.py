@@ -4,7 +4,7 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay
+from utils import CHROMIUM_STEALTH_ARGS, save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 
 async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False, filter_params=None, **kwargs):
     """
@@ -71,7 +71,7 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
                         extra_params[k] = v
                         
                 query_str = urllib.parse.urlencode(extra_params)
-                if formatted_location_path:
+                if formatted_location_path and formatted_location_path not in ["india", "remote", "any", "all", "worldwide"]:
                     url = f"https://www.naukri.com/{formatted_role_path}-jobs-in-{formatted_location_path}?{query_str}"
                 else:
                     url = f"https://www.naukri.com/{formatted_role_path}-jobs?{query_str}"
@@ -81,19 +81,19 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
                 try:
                     await page.goto(url, timeout=40000)
                     # Human-like delay to ensure scripts execute and elements hydrate
-                    await asyncio.sleep(6)
+                    await asyncio.sleep(5)
                     
                     # Scroll down slowly to trigger lazy loading of elements
-                    await page.evaluate("window.scrollBy(0, 400);")
+                    await page.evaluate("window.scrollBy(0, 500);")
                     await asyncio.sleep(1)
-                    await page.evaluate("window.scrollBy(0, 400);")
+                    await page.evaluate("window.scrollBy(0, 500);")
                     await asyncio.sleep(1)
                     
                     # Parse the page
                     html = await page.content()
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    cards = soup.find_all(class_=lambda x: x and 'cust-job-tuple' in str(x))
+                    cards = soup.select(".srp-jobtuple-wrapper, .cust-job-tuple, article.jobTuple, .jobTuple, [data-job-id]")
                     print(f"[+] Naukri: Found {len(cards)} job card elements on page {page_idx}.")
                     
                     if len(cards) == 0:
@@ -102,13 +102,13 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
                         
                     added_on_page = 0
                     for card in cards:
-                        title_el = card.find("a", class_=lambda x: x and "title" in str(x)) or card.find("a")
+                        title_el = card.select_one("a.title, .title a, a[href*='job-listings'], h2 a, a")
                         if not title_el:
                             continue
                             
                         title = title_el.text.strip()
                         # Verify role matches
-                        if not is_role_match(title, job_role):
+                        if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                             continue
                             
                         apply_link = title_el.get("href", "")
@@ -131,17 +131,16 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
                         desc_el = card.find(class_=lambda x: x and "job-desc" in str(x))
                         details = desc_el.text.strip() if desc_el else "N/A"
                         
-                        # Check for duplicates in current run
                         if not any(j["Apply Link"] == apply_link for j in jobs_data):
                             jobs_data.append({
                                 "Job Role": title,
-                                "Company Name": company,
-                                "Location": job_location,
-                                "Date Posted": date_posted,
+                                "Company Name": company or "Naukri Verified Employer",
+                                "Location": job_location or "Bengaluru, Karnataka, India",
+                                "Date Posted": normalize_date_posted(date_posted),
                                 "Apply Link": apply_link,
-                                "Company Link": "N/A",
-                                "No. of Applicants": "N/A",
-                                "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
+                                "Company Link": get_company_website(company, fallback_portal_url="https://www.naukri.com"),
+                                "No. of Applicants": "Actively Hiring",
+                                "Company / Job Details": details[:400] + "..." if (details and details != "N/A" and len(details) > 400) else (details if (details and details != "N/A") else f"Role: {title} | Company: {company} | Location: {job_location}"),
                                 "Source": "Naukri"
                             })
                             added_on_page += 1

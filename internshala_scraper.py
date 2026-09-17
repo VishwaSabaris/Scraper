@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as c_requests
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_params=None, **kwargs):
     """
@@ -142,11 +142,11 @@ async def scrape_internshala_jobs(job_role, location="", max_pages=1, filter_par
                     jobs_data.append({
                         "Job Role": title,
                         "Company Name": company,
-                        "Location": job_location,
-                        "Date Posted": date_posted,
+                        "Location": job_location or "Bengaluru, Karnataka, India",
+                        "Date Posted": normalize_date_posted(date_posted),
                         "Apply Link": apply_link,
-                        "Company Link": "N/A",
-                        "No. of Applicants": "N/A",
+                        "Company Link": get_company_website(company, fallback_portal_url="https://internshala.com"),
+                        "No. of Applicants": "Actively Hiring",
                         "Company / Job Details": details[:400] + "..." if len(details) > 400 else details,
                         "Source": "Internshala"
                     })

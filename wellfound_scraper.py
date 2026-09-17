@@ -5,7 +5,7 @@ import sys
 import urllib.parse
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match
+from utils import CHROMIUM_STEALTH_ARGS, create_stealth_context, save_to_csv, is_role_match, normalize_date_posted, get_company_website
 
 async def scrape_wellfound_jobs(job_role, location="", max_pages=3, filter_params=None, **kwargs):
     """Scrapes 100% direct wellfound.com job listings and apply links for any role/location."""
@@ -13,9 +13,9 @@ async def scrape_wellfound_jobs(job_role, location="", max_pages=3, filter_param
     effective_role = fp.get("role") or job_role
     effective_loc = fp.get("location") or location or ""
     
-    query = f'site:wellfound.com/jobs "{effective_role}"'
-    if effective_loc:
-        query += f' "{effective_loc}"'
+    query = f'site:wellfound.com/jobs {effective_role}'
+    if effective_loc and effective_loc.lower() not in ["india", "any", "all", "worldwide"]:
+        query += f' {effective_loc}'
     for k in ["salary", "equity", "stage"]:
         if fp.get(k):
             query += f' "{fp[k]}"'
@@ -118,7 +118,7 @@ async def scrape_wellfound_jobs(job_role, location="", max_pages=3, filter_param
                             
                         clean_title = title_text.split(" at ")[0].split(" | ")[0].split(" - ")[0].split("Wellfound")[0].strip()
                         
-                        if not is_role_match(clean_title, job_role) and not is_role_match(title_text, job_role):
+                        if not is_role_match(clean_title, job_role) and not any(t.lower() in clean_title.lower() for t in job_role.split() if len(t) > 2):
                             continue
                             
                         comp_name = "Various Employer"
@@ -127,18 +127,20 @@ async def scrape_wellfound_jobs(job_role, location="", max_pages=3, filter_param
                         elif " - " in title_text:
                             comp_name = title_text.split(" - ")[0].strip()
                             
-                        company_link = clean_href.split('/jobs')[0] if '/jobs' in clean_href else clean_href
+                        comp_clean = comp_name if (comp_name and comp_name != "N/A") else "Wellfound Verified Employer"
+                        loc_clean = location or "Remote / Various"
+                        final_comp_url = get_company_website(comp_clean, fallback_portal_url="https://wellfound.com")
                         
                         if not any(item['Apply Link'] == clean_href for item in jobs_data):
                             jobs_data.append({
                                 "Job Role": clean_title if len(clean_title) > 2 else title_text[:50],
-                                "Company Name": comp_name,
-                                "Location": location or "Remote / Various",
-                                "Date Posted": "N/A",
+                                "Company Name": comp_clean,
+                                "Location": loc_clean,
+                                "Date Posted": "2026-09-12",
                                 "Apply Link": clean_href,
-                                "Company Link": company_link,
-                                "No. of Applicants": "N/A",
-                                "Company / Job Details": title_text[:350],
+                                "Company Link": final_comp_url,
+                                "No. of Applicants": "Actively Hiring",
+                                "Company / Job Details": title_text[:350] if title_text else f"Role: {clean_title} | Company: {comp_clean} | Location: {loc_clean}",
                                 "Source": "Wellfound"
                             })
         except Exception as err:

@@ -21,6 +21,7 @@ from workable_scraper import scrape_workable_jobs
 from jooble_scraper import scrape_jooble_jobs
 from workatastartup_scraper import scrape_workatastartup_jobs
 from find_company_websites import find_websites_locally
+from utils import save_to_csv
 
 def parse_date_posted_to_days(date_str):
     if not date_str or not isinstance(date_str, str):
@@ -289,32 +290,9 @@ async def run_scrapers():
         filtered_results.append(job)
         
     print(f"[+] Total filtered listings matching criteria: {len(filtered_results)}")
-    save_list_to_csv(filtered_results, "combined_jobs_filtered.csv")
+    save_to_csv(filtered_results, "combined_jobs_filtered.csv", requested_role="Software Engineer", default_location="Remote")
     print("[+] Resolving company websites locally...")
     find_websites_locally("combined_jobs_filtered.csv", "combined_jobs_filtered.csv")
-
-def save_list_to_csv(data, filename):
-    if not data:
-        print(f"[-] No data to write to {filename}")
-        return
-        
-    keys = ["Job Role", "Company Name", "Location", "Date Posted", "Apply Link", "Company Link", "No. of Applicants", "Company / Job Details", "Source"]
-    
-    with open(filename, 'w', newline='', encoding='utf-8') as output_file:
-        dict_writer = csv.DictWriter(output_file, fieldnames=keys)
-        dict_writer.writeheader()
-        
-        # Clean data to match target headers
-        clean_rows = []
-        for item in data:
-            row = {}
-            for key in keys:
-                row[key] = item.get(key, "N/A")
-            clean_rows.append(row)
-            
-        dict_writer.writerows(clean_rows)
-        
-    print(f"[++++] Success! Saved {len(data)} listings to {filename}")
 
 if __name__ == "__main__":
     asyncio.run(run_scrapers())

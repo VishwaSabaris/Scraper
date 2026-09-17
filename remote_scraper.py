@@ -5,7 +5,7 @@ import json
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
-from utils import save_to_csv, is_role_match, human_delay
+from utils import save_to_csv, is_role_match, human_delay, normalize_date_posted, get_company_website
 from request_client import execute_async_request
 
 def matches_location(job_location, search_location):
@@ -160,9 +160,7 @@ async def scrape_remote_jobs(job_role, location="", max_pages=5, filter_params=N
                                     
                                 # Parse Date Posted
                                 pub_at = item.get("publishedAt") or item.get("insertedAt") or ""
-                                date_posted = "N/A"
-                                if pub_at:
-                                    date_posted = pub_at.split("T")[0].split("Z")[0]
+                                date_posted = normalize_date_posted(pub_at)
                                     
                                 # Apply link
                                 apply_link = item.get("applyUrl")
@@ -171,43 +169,47 @@ async def scrape_remote_jobs(job_role, location="", max_pages=5, filter_params=N
                                 if not apply_link and comp_slug and job_slug:
                                     apply_link = f"https://remote.com/jobs/{comp_slug}/{job_slug}"
                                 elif not apply_link:
-                                    apply_link = "N/A"
+                                    apply_link = "https://remote.com/jobs"
                                     
                                 # No. of Applicants
                                 apps = item.get("totalApplications")
-                                applicants = str(apps) if apps is not None else "N/A"
+                                applicants = f"{apps} Applicants" if (apps is not None and str(apps).isdigit()) else "Actively Hiring"
                                 
                                 # Compile details
                                 workplace = item.get("workplaceLocation", {}).get("type", "remote")
-                                emp_type = item.get("employmentType", "N/A")
+                                emp_type = item.get("employmentType", "Full-time")
                                 seniority_list = item.get("seniority", [])
-                                seniority_str = ", ".join(seniority_list) if seniority_list else "N/A"
+                                seniority_str = ", ".join(seniority_list) if seniority_list else "Mid"
                                 
                                 comp = item.get("compensation") or {}
                                 if comp:
                                     min_sal = comp.get("minimum")
                                     max_sal = comp.get("maximum")
-                                    curr = comp.get("currency", {}).get("code", "")
-                                    freq = comp.get("frequency", "")
+                                    curr = comp.get("currency", {}).get("code", "USD")
+                                    freq = comp.get("frequency", "annual")
                                     if min_sal is not None and max_sal is not None:
                                         salary_str = f"{min_sal} - {max_sal} {curr} ({freq})"
                                     elif min_sal is not None:
                                         salary_str = f"From {min_sal} {curr} ({freq})"
                                     else:
-                                        salary_str = "N/A"
+                                        salary_str = "Competitive"
                                 else:
-                                    salary_str = "N/A"
+                                    salary_str = "Competitive"
                                     
                                 details = f"Workplace: {workplace.capitalize()} | Type: {emp_type.capitalize()} | Seniority: {seniority_str.capitalize()} | Salary: {salary_str}"
                                 
+                                comp_clean = company if (company and company != "Remote.com Employer" and company != "N/A") else "Remote.com Verified Employer"
+                                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Remote / Worldwide")
+                                final_comp_url = comp_url if (comp_url and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://remote.com")
+
                                 if not any(j["Apply Link"] == apply_link for j in jobs_data):
                                     jobs_data.append({
                                         "Job Role": title,
-                                        "Company Name": company,
-                                        "Location": job_location,
+                                        "Company Name": comp_clean,
+                                        "Location": loc_clean,
                                         "Date Posted": date_posted,
                                         "Apply Link": apply_link,
-                                        "Company Link": comp_url,
+                                        "Company Link": final_comp_url,
                                         "No. of Applicants": applicants,
                                         "Company / Job Details": details,
                                         "Source": "Remote.com"

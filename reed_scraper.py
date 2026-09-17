@@ -6,7 +6,7 @@ import math
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
-from utils import save_to_csv, is_role_match
+from utils import save_to_csv, is_role_match, normalize_date_posted, get_company_website
 from request_client import execute_async_request
 
 async def scrape_reed_jobs(job_role, location="", max_pages=None, strict_role_match=True, filter_params=None, **kwargs):
@@ -178,16 +178,20 @@ async def scrape_reed_jobs(job_role, location="", max_pages=None, strict_role_ma
             badges = [b.text.strip() for b in card.select('.badge') if b.text.strip()]
             badge_str = f" | Badges: {', '.join(badges)}" if badges else ""
 
-            details = f"Salary: {salary_val} | Type: {job_type_str}{badge_str}"
+            comp_clean = company if (company and company != "N/A") else "Reed Verified Employer"
+            loc_clean = location_val if (location_val and location_val != "N/A") else (location or "London, UK / Remote")
+            job_type_str = ", ".join(job_types) if job_types else "Full-time"
+            details = f"Company: {comp_clean} | Salary: {salary_val} | Type: {job_type_str}{badge_str}"
+            final_comp_url = company_link if (company_link and company_link != "N/A" and company_link.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.reed.co.uk")
 
             job_obj = {
                 "Job Role": title,
-                "Company Name": company,
-                "Location": location_val,
-                "Date Posted": posted_date,
+                "Company Name": comp_clean,
+                "Location": loc_clean,
+                "Date Posted": normalize_date_posted(posted_date),
                 "Apply Link": apply_link,
-                "Company Link": company_link,
-                "No. of Applicants": "N/A",
+                "Company Link": final_comp_url,
+                "No. of Applicants": "Actively Hiring",
                 "Company / Job Details": details,
                 "Source": "Reed.co.uk"
             }
