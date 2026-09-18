@@ -77,8 +77,10 @@ async def scrape_timesjobs_jobs(job_role, location="", max_pages=5, page_size=50
                 skills = item.get("skills", "") or ""
                 desc = item.get("description", "") or ""
                 
-                # Check match across title, skills, description
-                if not (is_role_match(title, job_role) or is_role_match(skills, job_role) or any(t.lower() in (title + " " + skills + " " + desc).lower() for t in job_role.split() if len(t) > 2)):
+                # Check match across title, skills, description, company
+                comp_str = str(item.get("company") or item.get("companyName") or "").lower()
+                is_comp = bool(fp.get("company")) or (len(job_role) >= 3 and job_role.lower() in comp_str)
+                if not (is_comp or is_role_match(title, job_role) or is_role_match(skills, job_role) or any(t.lower() in (title + " " + skills + " " + desc).lower() for t in job_role.split() if len(t) > 2)):
                     continue
                     
                 company = item.get("company") or item.get("companyName") or "TimesJobs Recruiter"

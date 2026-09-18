@@ -215,7 +215,9 @@ class FilterEngine:
             terms.append(uf.keywords)
         if not terms and uf.skills:
             terms.append(uf.skills)
-        return " ".join(terms) if terms else "Sales Development Representative"
+        if not terms and uf.company:
+            terms.append(uf.company)
+        return " ".join(terms) if terms else ""
 
     @classmethod
     def adapt_for_portal(cls, portal_key: str, uf: UniversalJobFilter) -> Tuple[Dict[str, Any], List[str], List[str]]:
@@ -514,6 +516,8 @@ class FilterEngine:
                 params["workMode"] = "hybrid"
             else:
                 params["workMode"] = "wfo"
+        if uf.sort_by:
+            params["sort"] = "2" if "date" in uf.sort_by.lower() else "1"
         return params
 
     @classmethod

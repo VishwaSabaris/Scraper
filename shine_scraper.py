@@ -65,8 +65,9 @@ async def scrape_shine_jobs(job_role, location="", max_pages=1, filter_params=No
             for item in results:
                 title = item.get("jJT") or item.get("title") or ""
                 title = title.strip()
-                
-                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
+                company_cand = str(item.get("jCName") or item.get("company_name") or "").lower()
+                is_company_match = bool(fp.get("company")) or (len(job_role) >= 3 and job_role.lower() in company_cand)
+                if not is_company_match and not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 company = item.get("jCName") or item.get("company_name") or "Shine Recruiter"

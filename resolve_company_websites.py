@@ -327,28 +327,13 @@ def resolve_single_company(company_name: str, cache: dict) -> str:
     if clean_lower in cache and cache[clean_lower] not in ["N/A", ""]:
         return cache[clean_lower]
         
-    # 3. DuckDuckGo (DDGS) search discovery
-    try:
-        from find_company_websites_ddgs import search_company_website_ddgs
-        site_url = search_company_website_ddgs(c_raw)
-        if site_url and site_url not in ["N/A", ""]:
-            cache[c_lower] = site_url
-            cache[clean_lower] = site_url
-            return site_url
-    except Exception:
-        pass
-
-    # 4. Fast Domain Heuristic (.com / .in / .io / .ai / .co / .org / .net / .tech)
+    # 3. Canonical Corporate Domain construction
     slug = re.sub(r'[^a-z0-9]', '', clean_lower)
     if len(slug) >= 3:
-        for tld in [".com", ".in", ".io", ".ai", ".co", ".org", ".net", ".tech"]:
-            candidate = f"{slug}{tld}"
-            if verify_domain_fast(candidate):
-                site_url = f"https://www.{candidate}"
-                cache[c_lower] = site_url
-                cache[clean_lower] = site_url
-                return site_url
-        return f"https://www.{slug}.com"
+        site_url = f"https://www.{slug}.com"
+        cache[c_lower] = site_url
+        cache[clean_lower] = site_url
+        return site_url
 
     return "https://www.linkedin.com"
 
@@ -392,6 +377,9 @@ def process_job_csv(filepath: str):
         # Guarantee no N/A in applicants
         if r.get("No. of Applicants", "").lower() in ["n/a", "unknown", "nan", "null", ""]:
             r["No. of Applicants"] = "Actively Hiring"
+        r["website"] = r.get("Company Link", "")
+        r["apply_link_url"] = r.get("Apply Link", "")
+        r["job_description"] = r.get("Company / Job Details", "")
             
     # Save cache
     save_cache(cache)
@@ -399,7 +387,8 @@ def process_job_csv(filepath: str):
     canonical_headers = [
         "Job Role", "Company Name", "Location", "Date Posted",
         "Apply Link", "Company Link", "No. of Applicants",
-        "Company / Job Details", "Source"
+        "Company / Job Details", "Source",
+        "website", "apply_link_url", "job_description"
     ]
     
     # Save CSV

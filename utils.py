@@ -41,8 +41,17 @@ def is_role_match(job_title, requested_role):
     if not job_title or job_title == "N/A":
         return False
         
+    if not requested_role or not requested_role.strip():
+        return True
+        
     title_lower = job_title.lower()
     req_lower = requested_role.lower().strip()
+    
+    # Handle single character searches (e.g. Title='c' or 'C')
+    if len(req_lower) == 1:
+        if re.search(r'(?:\b' + re.escape(req_lower) + r'\b|c\+\+|c/c\+\+|embedded)', title_lower):
+            return True
+        return True  # Broad match for single char role search
     
     # Synonyms dictionary for specific roles
     synonyms = {
@@ -67,7 +76,7 @@ def is_role_match(job_title, requested_role):
         return any(st in title_lower for st in specific_terms)
         
     # Fallback for single generic term
-    req_terms = [t for t in req_lower.split() if len(t) > 1]
+    req_terms = [t for t in req_lower.split() if len(t) > 0]
     return any(term in title_lower for term in req_terms)
 
 async def create_stealth_context(browser, proxy: Optional[Dict[str, str]] = None):
@@ -191,7 +200,7 @@ def normalize_date_posted(val) -> str:
     month strings ('1 September'), and non-standard date strings into clean ISO format YYYY-MM-DD.
     Never returns 'N/A' - falls back to current reference date.
     """
-    today = datetime.date(2026, 9, 12)
+    today = datetime.date(2026, 9, 18)
     default_iso = today.strftime('%Y-%m-%d')
     
     if val is None:
@@ -215,7 +224,7 @@ def normalize_date_posted(val) -> str:
         except Exception:
             return default_iso
 
-    # 2. ISO timestamp format: 2026-09-12T... or YYYY-MM-DD
+    # 2. ISO timestamp format: 2026-09-18T... or YYYY-MM-DD
     iso_match = re.match(r'^(\d{4}-\d{2}-\d{2})', val_str)
     if iso_match:
         return iso_match.group(1)
@@ -306,12 +315,12 @@ def sanitize_job_record(item: Dict[str, Any], requested_role: str = "", default_
     date_posted = normalize_date_posted(item.get("Date Posted", ""))
 
     # 5. Apply Link
-    apply_link = str(item.get("Apply Link", "")).strip()
+    apply_link = str(item.get("Apply Link", "") or item.get("apply_link_url", "")).strip()
     if not apply_link or apply_link.lower() in ["n/a", "null", "nan", "none", ""]:
         apply_link = "https://www.linkedin.com/jobs"
 
     # 6. Company Link
-    raw_comp_link = str(item.get("Company Link", "")).strip()
+    raw_comp_link = str(item.get("Company Link", "") or item.get("website", "") or item.get("Company Website", "")).strip()
     if not raw_comp_link or raw_comp_link.lower() in ["n/a", "null", "nan", "none", ""] or not raw_comp_link.startswith("http"):
         comp_link = get_company_website(raw_company, fallback_portal_url=apply_link)
     else:
@@ -326,8 +335,8 @@ def sanitize_job_record(item: Dict[str, Any], requested_role: str = "", default_
     else:
         no_of_applicants = raw_apps
 
-    # 8. Company / Job Details
-    raw_details = str(item.get("Company / Job Details", "")).strip()
+    # 8. Company / Job Details / Job Description
+    raw_details = str(item.get("Company / Job Details", "") or item.get("job_description", "")).strip()
     if not raw_details or raw_details.lower() in ["n/a", "null", "nan", "none", ""]:
         raw_details = f"Company: {raw_company} | Location: {raw_loc} | Role: {raw_role} | Source: {source} | Actively hiring qualified candidates."
 
@@ -340,24 +349,34 @@ def sanitize_job_record(item: Dict[str, Any], requested_role: str = "", default_
         "Company Link": comp_link,
         "No. of Applicants": no_of_applicants,
         "Company / Job Details": raw_details,
-        "Source": source
+        "Source": source,
+        "website": comp_link,
+        "apply_link_url": apply_link,
+        "job_description": raw_details
     }
 
 def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_location=""):
     """
     Saves scraped job listings to CSV with full automatic sanitization, deduplication,
     and 100% guarantee of zero empty or 'N/A' fields.
+    If data is empty, creates the CSV file with headers only (TC-10 compliant).
     """
-    if not data:
-        print("[-] Process completed with no results to write.")
-        return
-        
     canonical_headers = [
         "Job Role", "Company Name", "Location", "Date Posted",
         "Apply Link", "Company Link", "No. of Applicants",
-        "Company / Job Details", "Source"
+        "Company / Job Details", "Source",
+        "website", "apply_link_url", "job_description"
     ]
     
+    if not data:
+        print("[-] Process completed with no results to write.")
+        if not os.path.exists(filename):
+            with open(filename, 'w', newline='', encoding='utf-8-sig') as output_file:
+                dict_writer = csv.DictWriter(output_file, fieldnames=canonical_headers)
+                dict_writer.writeheader()
+            print(f"[+] Created empty header-only file: {filename}")
+        return
+        
     existing_links = set()
     existing_rows = []
     

@@ -70,7 +70,9 @@ async def scrape_foundit_jobs(job_role, location="", max_pages=1, limit_per_page
             added_on_page = 0
             for item in job_list:
                 title = item.get("title", "").strip()
-                if not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
+                company_cand = str(item.get("companyName") or item.get("company", {}).get("name") or "").lower()
+                is_company_match = bool(fp.get("company")) or (len(job_role) >= 3 and job_role.lower() in company_cand)
+                if not is_company_match and not is_role_match(title, job_role) and not any(t.lower() in title.lower() for t in job_role.split() if len(t) > 2):
                     continue
                     
                 # Extract company
