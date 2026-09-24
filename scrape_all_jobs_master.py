@@ -42,6 +42,7 @@ import argparse
 import sys
 import os
 import csv
+import re
 from typing import List, Dict, Any, Optional
 
 # Import the central filter engine
@@ -273,6 +274,114 @@ PORTAL_REGISTRY: Dict[str, Dict[str, Any]] = {
 INDIAN_PORTALS = ["foundit", "apna", "instahyre", "internshala", "shine", "adzuna", "timesjobs", "freshersworld", "naukri", "jooble"]
 GLOBAL_PORTALS = ["linkedin", "indeed", "glassdoor", "careerjet", "dice", "simplyhired", "builtin", "reed", "himalayas", "jobleads", "remote_co", "wellfound", "workable", "workatastartup", "ziprecruiter", "careerbuilder", "jobspresso"]
 
+# Ordered portal keys for deterministic, alphabetical numbering (1 - Adzuna, 2 - Apna, ...)
+ORDERED_PORTAL_KEYS = sorted(PORTAL_REGISTRY.keys())
+INDEX_TO_PORTAL = {i: key for i, key in enumerate(ORDERED_PORTAL_KEYS, 1)}
+PORTAL_TO_INDEX = {key: i for i, key in enumerate(ORDERED_PORTAL_KEYS, 1)}
+
+
+def display_selective_portals_menu():
+    """
+    Displays all available portals in a clean, numbered format (1 - Adzuna, 2 - Apna, etc.).
+    """
+    total = len(ORDERED_PORTAL_KEYS)
+    half = (total + 1) // 2
+
+    print("\n" + "=" * 84)
+    print("                    AVAILABLE JOB PORTALS (SELECTIVE OPTION)")
+    print("=" * 84)
+    for i in range(1, half + 1):
+        col1_key = INDEX_TO_PORTAL.get(i)
+        col1_name = PORTAL_REGISTRY[col1_key]["name"] if col1_key else ""
+        col1_str = f"{i:2d} - {col1_name}" if col1_key else ""
+
+        col2_idx = i + half
+        if col2_idx <= total:
+            col2_key = INDEX_TO_PORTAL.get(col2_idx)
+            col2_name = PORTAL_REGISTRY[col2_key]["name"] if col2_key else ""
+            col2_str = f"{col2_idx:2d} - {col2_name}" if col2_key else ""
+            print(f"   {col1_str:<40} {col2_str}")
+        else:
+            print(f"   {col1_str}")
+    print("=" * 84)
+    print("  Enter portal numbers or names separated by commas (e.g. 1,2,5,6)")
+    print("=" * 84 + "\n")
+
+
+def resolve_selective_portals(input_str: str) -> List[str]:
+    """
+    Parses a string of comma-separated numbers, ranges, or portal names into valid portal keys.
+    Examples:
+      - '1,2,5,6' -> ['adzuna', 'apna', 'careerjet', 'dice']
+      - '1-3, 5'  -> ['adzuna', 'apna', 'builtin', 'careerjet']
+      - '1-adzuna, 2-apna' -> ['adzuna', 'apna']
+      - 'adzuna, apna' -> ['adzuna', 'apna']
+    """
+    selected_keys: List[str] = []
+    seen = set()
+
+    def add_key(k: str):
+        if k in PORTAL_REGISTRY and k not in seen:
+            seen.add(k)
+            selected_keys.append(k)
+
+    tokens = [t.strip() for t in input_str.split(",") if t.strip()]
+    for token in tokens:
+        token_lower = token.lower()
+
+        # Handle pure number range: '1-4'
+        m_range = re.match(r"^(\d+)\s*-\s*(\d+)$", token_lower)
+        if m_range:
+            start_idx = int(m_range.group(1))
+            end_idx = int(m_range.group(2))
+            if start_idx <= end_idx:
+                for idx in range(start_idx, end_idx + 1):
+                    if idx in INDEX_TO_PORTAL:
+                        add_key(INDEX_TO_PORTAL[idx])
+            continue
+
+        # Handle '1-adzuna' or '1 - adzuna' style
+        m_prefix = re.match(r"^(\d+)\s*[-:]\s*([a-z_.\s][a-z0-9_.\s]*)$", token_lower)
+        if m_prefix:
+            idx = int(m_prefix.group(1))
+            name_part = m_prefix.group(2).strip()
+            if idx in INDEX_TO_PORTAL:
+                add_key(INDEX_TO_PORTAL[idx])
+                continue
+            for k, info in PORTAL_REGISTRY.items():
+                if name_part == k or name_part in info["name"].lower():
+                    add_key(k)
+                    break
+            continue
+
+        # Handle single integer: '1', '2', '5', '6'
+        if token_lower.isdigit():
+            idx = int(token_lower)
+            if idx in INDEX_TO_PORTAL:
+                add_key(INDEX_TO_PORTAL[idx])
+            else:
+                print(f"  [!] Notice: Portal index {idx} is out of range (1 - {len(ORDERED_PORTAL_KEYS)}). Skipping.")
+            continue
+
+        # Handle portal key or exact name: 'adzuna', 'linkedin', etc.
+        matched = False
+        for k, info in PORTAL_REGISTRY.items():
+            if token_lower == k or token_lower == info["name"].lower():
+                add_key(k)
+                matched = True
+                break
+        if not matched:
+            # Substring fallback
+            for k, info in PORTAL_REGISTRY.items():
+                if token_lower in k or token_lower in info["name"].lower():
+                    add_key(k)
+                    matched = True
+                    break
+        if not matched:
+            print(f"  [!] Notice: Unrecognized portal name or token '{token}'. Skipping.")
+
+    return selected_keys
+
 
 def prompt_user_filters() -> UniversalJobFilter:
     """
@@ -293,17 +402,20 @@ def prompt_user_filters() -> UniversalJobFilter:
     # 2. Location
     loc_input = input("[2/13] Target Location / City / Remote [Bangalore]: ").strip()
     uf.location = loc_input or "Bangalore"
+    if "remote" in uf.location.lower():
+        uf.work_mode = "remote"
 
     # 3. Work Mode
+    default_wm_choice = "2" if uf.work_mode == "remote" else "1"
     print("\n  Work Modes: (1) All, (2) Remote / WFH, (3) Hybrid, (4) On-Site / Office")
-    wm_choice = input("  Select Work Mode [1]: ").strip()
-    if wm_choice == "2":
+    wm_choice = input(f"  Select Work Mode [{default_wm_choice}]: ").strip()
+    if wm_choice == "2" or (not wm_choice and uf.work_mode == "remote"):
         uf.work_mode = "remote"
     elif wm_choice == "3":
         uf.work_mode = "hybrid"
     elif wm_choice == "4":
         uf.work_mode = "wfo"
-    else:
+    elif wm_choice == "1":
         uf.work_mode = ""
 
     # 4. Experience Level
@@ -524,6 +636,13 @@ async def run_master_scraper(target_portals: List[str], uf: UniversalJobFilter, 
         save_to_csv(unique_jobs, output_file, requested_role=uf.keywords or uf.job_title, default_location=uf.location)
         print(f"[++++] Success! Saved {len(unique_jobs)} verified job records to '{output_file}'")
         
+        # Create instant safety snapshot so raw records are never lost
+        try:
+            import shutil
+            shutil.copy2(output_file, f"{output_file}.raw.bak")
+        except Exception:
+            pass
+        
         # 1. Automatic Job Description Enrichment
         print(f"\n[*] Launching Universal Job Description Enricher for '{output_file}'...")
         try:
@@ -564,7 +683,7 @@ def parse_cli_args():
     parser.add_argument("--sort", default="relevance", choices=["relevance", "date", "salary"], help="Sort order")
     
     # Execution options
-    parser.add_argument("--portals", "-p", default="all", help="Target portals: 'all', 'indian', 'global', or comma-separated list")
+    parser.add_argument("--portals", "-p", default="all", help="Target portals: 'all', 'indian', 'global', or comma-separated names/numbers (e.g. '1,2,5,6')")
     parser.add_argument("--pages", "-n", type=int, default=3, help="Max pages per portal (default: 3)")
     parser.add_argument("--output", "-o", default="all_jobs_master_extracted.csv", help="Output CSV filename")
     parser.add_argument("--interactive", "-i", action="store_true", help="Launch interactive filter setup questionnaire")
@@ -580,21 +699,42 @@ def main():
     # Determine if we should run interactive prompt
     if args.interactive or (not args.role and len(sys.argv) == 1):
         uf = prompt_user_filters()
-        print("\n  Target Portals: (1) All 26 Portals, (2) Indian Portals (10), (3) Global Portals (16), (4) Custom")
-        portal_choice = input("  Select Target Portals [1]: ").strip()
-        if portal_choice == "2":
+        
+        print("\n" + "=" * 70)
+        print("                 TARGET PORTAL SELECTION")
+        print("=" * 70)
+        print("  (1) All 26 Portals (Full Universal Coverage)")
+        print("  (2) Indian Portals (10 Portals: Foundit, Apna, Instahyre, etc.)")
+        print("  (3) Global Portals (17 Portals: LinkedIn, Indeed, Glassdoor, etc.)")
+        print("  (4) Selective Option Portals (Choose specific portals by number e.g. 1,2,5,6)")
+        print("-" * 70)
+        portal_choice = input("  Select Option [1-4] or enter values directly (e.g. 1,2,5,6) [1]: ").strip()
+
+        if portal_choice == "2" or portal_choice.lower() == "indian":
             target_portals = INDIAN_PORTALS
-        elif portal_choice == "3":
+        elif portal_choice == "3" or portal_choice.lower() == "global":
             target_portals = GLOBAL_PORTALS
-        elif portal_choice == "4":
-            custom_input = input("  Enter comma-separated portal names (e.g. foundit, apna, shine, dice): ").strip()
-            target_portals = [p.strip().lower() for p in custom_input.split(",") if p.strip().lower() in PORTAL_REGISTRY]
+        elif portal_choice in ["4", "selective", "custom", "s"]:
+            display_selective_portals_menu()
+            custom_input = input("  Enter portal numbers separated by commas (e.g. 1,2,5,6): ").strip()
+            target_portals = resolve_selective_portals(custom_input)
             if not target_portals:
+                print("  [!] No valid portals selected. Defaulting to All Portals.")
+                target_portals = list(PORTAL_REGISTRY.keys())
+        elif "," in portal_choice or (portal_choice.isdigit() and int(portal_choice) > 4):
+            # Direct numeric input at primary prompt (e.g. 1,2,5,6 or single portal number > 4)
+            target_portals = resolve_selective_portals(portal_choice)
+            if not target_portals:
+                print("  [!] Unrecognized input. Defaulting to All Portals.")
                 target_portals = list(PORTAL_REGISTRY.keys())
         else:
             target_portals = list(PORTAL_REGISTRY.keys())
 
-        pages_input = input("\n  Max Pages to scrape per portal [3]: ").strip()
+        # Display confirmation of selected portals
+        selected_names = [PORTAL_REGISTRY[p]["name"] for p in target_portals if p in PORTAL_REGISTRY]
+        print(f"\n[+] Active Portals Selected ({len(target_portals)}): {', '.join(selected_names)}\n")
+
+        pages_input = input("  Max Pages to scrape per portal [3]: ").strip()
         max_pages = int(pages_input) if pages_input.isdigit() else 3
 
         out_input = input("  Output CSV Filename [all_jobs_master_extracted.csv]: ").strip()
@@ -628,6 +768,10 @@ def main():
             target_portals = INDIAN_PORTALS
         elif p_arg == "global":
             target_portals = GLOBAL_PORTALS
+        elif any(c.isdigit() for c in p_arg):
+            target_portals = resolve_selective_portals(p_arg)
+            if not target_portals:
+                target_portals = list(PORTAL_REGISTRY.keys())
         else:
             target_portals = [p.strip() for p in p_arg.split(",") if p.strip() in PORTAL_REGISTRY]
             if not target_portals:

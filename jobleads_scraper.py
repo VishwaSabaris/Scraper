@@ -16,23 +16,49 @@ def get_jobleads_country_code(location):
         return "us"
     loc_lower = location.lower().strip()
     
+    # United Kingdom
     if any(x in loc_lower for x in ["united kingdom", "uk", "great britain", "england", "scotland", "wales", "london", "manchester", "birmingham", "gb"]):
         return "gb"
-    if any(x in loc_lower for x in ["india", "in", "mumbai", "bangalore", "jaipur", "delhi"]):
+    
+    # India - comprehensive cities and states
+    indian_locs = [
+        "india", "chennai", "mumbai", "bangalore", "bengaluru", "delhi", "new delhi", "ncr", "noida", 
+        "gurgaon", "gurugram", "hyderabad", "pune", "kolkata", "ahmedabad", "jaipur", "surat", 
+        "lucknow", "kanpur", "nagpur", "indore", "thane", "bhopal", "visakhapatnam", "vadodara", 
+        "coimbatore", "kochi", "cochin", "chandigarh", "mysore", "mysuru", "trivandrum", 
+        "thiruvananthapuram", "cuddalore", "kannur", "kozhikode", "madurai", "tiruchirappalli", 
+        "salem", "tiruppur", "tamil nadu", "karnataka", "maharashtra", "telangana", "kerala", 
+        "gujarat", "rajasthan", "punjab", "haryana", "uttar pradesh", "west bengal", "andhra pradesh"
+    ]
+    if any(x in loc_lower for x in indian_locs) or re.search(r'\b(in|india)\b', loc_lower):
         return "in"
-    if any(x in loc_lower for x in ["canada", "ca", "toronto", "vancouver", "montreal"]):
+        
+    # Canada
+    if any(x in loc_lower for x in ["canada", "ca", "toronto", "vancouver", "montreal", "ottawa", "calgary"]):
         return "ca"
-    if any(x in loc_lower for x in ["australia", "au", "sydney", "melbourne", "brisbane"]):
+        
+    # Australia
+    if any(x in loc_lower for x in ["australia", "au", "sydney", "melbourne", "brisbane", "perth", "adelaide"]):
         return "au"
-    if any(x in loc_lower for x in ["new zealand", "nz", "auckland", "wellington"]):
+        
+    # New Zealand
+    if any(x in loc_lower for x in ["new zealand", "nz", "auckland", "wellington", "christchurch"]):
         return "nz"
-    if any(x in loc_lower for x in ["united arab emirates", "uae", "dubai", "abu dhabi"]):
+        
+    # UAE
+    if any(x in loc_lower for x in ["united arab emirates", "uae", "dubai", "abu dhabi", "sharjah"]):
         return "ae"
-    if any(x in loc_lower for x in ["germany", "de", "munich", "berlin", "frankfurt"]):
+        
+    # Germany
+    if any(x in loc_lower for x in ["germany", "de", "munich", "berlin", "frankfurt", "hamburg", "cologne"]):
         return "de"
-    if any(x in loc_lower for x in ["france", "fr", "paris", "lyon"]):
+        
+    # France
+    if any(x in loc_lower for x in ["france", "fr", "paris", "lyon", "marseille"]):
         return "fr"
-    if any(x in loc_lower for x in ["ireland", "ie", "dublin"]):
+        
+    # Ireland
+    if any(x in loc_lower for x in ["ireland", "ie", "dublin", "cork"]):
         return "ie"
         
     return "us"
@@ -42,7 +68,11 @@ async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=Fals
     Scrapes job listings from jobleads.com using Playwright chromium persistent context.
     Supports dynamic filter parameters and deep pagination.
     """
-    fp = filter_params or {}
+    fp = dict(filter_params or {})
+    for k, v in kwargs.items():
+        if v is not None and k not in fp:
+            fp[k] = v
+
     effective_role = fp.get("q") or job_role
     effective_loc = fp.get("location") or location or ""
     
@@ -50,15 +80,58 @@ async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=Fals
     encoded_role = urllib.parse.quote(effective_role.strip())
     
     if effective_loc and effective_loc.strip():
-        encoded_loc = urllib.parse.quote(effective_loc.strip())
+        loc_clean = effective_loc.strip()
+        # Format location with country for JobLeads URL structure (e.g. 'Chennai, India' for /in/jobs/l/)
+        if country_code == "in" and not any(k in loc_clean.lower() for k in ["india", "in"]):
+            loc_formatted = f"{loc_clean}, India"
+        elif country_code == "gb" and not any(k in loc_clean.lower() for k in ["uk", "united kingdom", "gb"]):
+            loc_formatted = f"{loc_clean}, United Kingdom"
+        elif country_code == "us" and not any(k in loc_clean.lower() for k in ["usa", "united states", "us"]):
+            loc_formatted = f"{loc_clean}, United States"
+        else:
+            loc_formatted = loc_clean
+
+        encoded_loc = urllib.parse.quote(loc_formatted)
         base_url = f"https://www.jobleads.com/{country_code}/jobs/l/{encoded_loc}/q/{encoded_role}"
     else:
         base_url = f"https://www.jobleads.com/{country_code}/jobs/q/{encoded_role}"
 
     extra_q = {}
+    
+    # Map work_mode to filter_by_remote if not already set
+    work_mode = fp.get("work_mode") or kwargs.get("work_mode")
+    if "filter_by_remote" not in fp and work_mode:
+        wm = str(work_mode).lower().strip()
+        if "remote" in wm or "wfh" in wm:
+            extra_q["filter_by_remote"] = "remote"
+        elif "hybrid" in wm:
+            extra_q["filter_by_remote"] = "hybrid"
+        elif any(k in wm for k in ["office", "wfo", "onsite", "in_person", "in-person"]):
+            extra_q["filter_by_remote"] = "in_person"
+
     for k, v in fp.items():
-        if k not in ["role", "location", "q"]:
+        if k not in ["role", "location", "q", "work_mode"]:
             extra_q[k] = v
+
+    # Optional City Coordinates for precision
+    city_coords = {
+        "chennai": {"location_latitude": "13.0836939", "location_longitude": "80.270186", "location_coordinates_radius": "23723.45776770741"},
+        "bangalore": {"location_latitude": "12.9715987", "location_longitude": "77.5945627", "location_coordinates_radius": "25000"},
+        "bengaluru": {"location_latitude": "12.9715987", "location_longitude": "77.5945627", "location_coordinates_radius": "25000"},
+        "mumbai": {"location_latitude": "19.0760", "location_longitude": "72.8777", "location_coordinates_radius": "25000"},
+        "delhi": {"location_latitude": "28.6139", "location_longitude": "77.2090", "location_coordinates_radius": "25000"},
+        "hyderabad": {"location_latitude": "17.3850", "location_longitude": "78.4867", "location_coordinates_radius": "25000"},
+        "pune": {"location_latitude": "18.5204", "location_longitude": "73.8567", "location_coordinates_radius": "25000"},
+        "kolkata": {"location_latitude": "22.5726", "location_longitude": "88.3639", "location_coordinates_radius": "25000"},
+    }
+    if effective_loc:
+        for cname, coords in city_coords.items():
+            if cname in effective_loc.lower():
+                for ck, cv in coords.items():
+                    if ck not in extra_q:
+                        extra_q[ck] = cv
+                break
+
     if extra_q:
         url = f"{base_url}?{urllib.parse.urlencode(extra_q)}"
     else:
@@ -96,14 +169,14 @@ async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=Fals
             await asyncio.sleep(6)
             
             # Scroll loop to load all available jobs dynamically (Infinite Scroll)
-            print("[*] JobLeads: Scrolling to load more listings...")
+            print("[*] JobLeads: Scrolling to load more listings...", flush=True)
             prev_card_count = 0
-            max_scrolls = 25
+            max_scrolls = max(2, min(max_pages * 3, 15))
             scroll_count = 0
             
             while scroll_count < max_scrolls:
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(2)
                 
                 current_html = await page.content()
                 current_soup = BeautifulSoup(current_html, 'html.parser')
@@ -112,7 +185,7 @@ async def scrape_jobleads_jobs(job_role, location="", max_pages=1, headless=Fals
                     cards = current_soup.find_all(attrs={"data-testid": "search-job-card"})
                     
                 curr_card_count = len(cards)
-                print(f"  - Scroll {scroll_count + 1}: Found {curr_card_count} job cards.")
+                print(f"  - Scroll {scroll_count + 1}: Found {curr_card_count} job cards.", flush=True)
                 
                 if curr_card_count <= prev_card_count:
                     break

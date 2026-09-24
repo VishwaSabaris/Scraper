@@ -62,166 +62,161 @@ def build_workatastartup_url(job_role="", location="", industry="", company_size
     query_string = urllib.parse.urlencode(params)
     return f"https://www.workatastartup.com/companies?{query_string}"
 
-def parse_workatastartup_html(html_content, job_role_filter=""):
+def parse_workatastartup_html(html_content, job_role_filter="", work_mode_filter=""):
     """
     Parses HTML content from workatastartup.com.
-    Extracts all startups matching search results, including those with specific open job links 
-    and those with general applications (like Arva AI, Upsolve AI, etc.).
+    Extracts ONLY real individual job postings (/jobs/<numeric_id>).
+    Never creates synthetic 'General Application' records or company profiles.
+    Accurately extracts real company names and excludes navigation elements like 'See all X jobs ›'.
     """
     soup = BeautifulSoup(html_content, 'html.parser')
     results = []
-    seen_keys = set()
+    seen_apply_links = set()
     
-    # Find all company profile links (/companies/<slug>)
-    company_links = soup.find_all('a', href=lambda h: h and re.search(r'/companies/[a-zA-Z0-9_-]+$', h))
+    # Find all specific job links (/jobs/<numeric_id>)
+    job_links = soup.find_all('a', href=lambda h: h and re.search(r'/jobs/\d+', h))
     
-    for clink in company_links:
-        company_href = clink['href']
-        if company_href.endswith('/companies'):
+    for jl in job_links:
+        j_href = jl['href']
+        apply_link = "https://www.workatastartup.com" + j_href if j_href.startswith('/') else j_href
+        
+        if apply_link in seen_apply_links:
             continue
             
-        comp_url = "https://www.workatastartup.com" + company_href if company_href.startswith('/') else company_href
-        raw_comp_text = clink.text.strip()
-        if not raw_comp_text or len(raw_comp_text) < 2:
-            continue
-            
-        # Find card container
-        card = clink.parent
-        for _ in range(8):
-            if not card:
-                break
-            if len(card.find_all(['a', 'button', 'div', 'span'])) > 4:
-                break
-            card = card.parent
-            
-        if not card:
-            continue
-            
-        # YC Batch cohort, e.g. (S24), (W24), (W22)
-        comp_batch = "N/A"
-        batch_match = re.search(r'\(([A-Z0-9]+)\)', raw_comp_text)
-        if batch_match:
-            comp_batch = batch_match.group(1)
-            
-        # Company Name and Tagline
+        # Check Layout 1 (Modern grid layout: <a> is the card containing h3, p.font-semibold, img)
+        h3 = jl.find(['h3', 'h2'])
+        comp_el = jl.find('p', class_=lambda c: c and 'font-semibold' in c)
+        img = jl.find('img')
+        
         comp_name = "YC Startup"
+        job_title = ""
         comp_tagline = ""
-        parts = re.split(r'[\u2022\u2013\u2014|\t\n]', raw_comp_text)
-        if parts:
-            comp_name = re.sub(r'\s*\([A-Z0-9]+\).*', '', parts[0]).strip()
-            if len(parts) > 1:
-                comp_tagline = parts[1].strip()
-                
-        card_text = card.text.strip()
+        comp_batch = ""
+        comp_url = ""
         
-        # Location extraction from card text
-        loc_str = "Remote / Various"
-        loc_match = re.search(r'📍\s*([^📍\n•\t]+)', card_text)
-        if loc_match:
-            loc_str = loc_match.group(1).strip()
-        else:
-            loc_tokens = []
-            for token in re.split(r'[\n\t•|]', card_text):
-                t_clean = token.strip()
-                if any(k in t_clean for k in ['London', 'United Kingdom', 'UK', 'San Francisco', 'Mountain View', 'Los Angeles', 'New York', 'India', 'IN', 'Remote', 'CA', 'NY', 'US', 'GB']):
-                    if t_clean not in loc_tokens and len(t_clean) < 60:
-                        loc_tokens.append(t_clean)
-            if loc_tokens:
-                loc_str = " / ".join(loc_tokens[:2])
-                
-        # Check for specific open job role links (/jobs/<numeric_id>)
-        job_links = card.find_all('a', href=lambda h: h and re.search(r'/jobs/\d+', h))
+        if h3 and h3.text.strip():
+            job_title = h3.text.strip()
+        if comp_el and comp_el.text.strip():
+            comp_name = comp_el.text.strip()
+        elif img and img.get('alt'):
+            comp_name = img['alt'].replace(' logo', '').replace(' Logo', '').strip()
+            
+        # If not found inside jl itself, check Layout 2 (Traditional list layout)
+        if not job_title:
+            job_title = jl.text.strip()
+            
+        if not job_title:
+            continue
+            
+        # Role match validation: strictly match requested job role if provided
+        if job_role_filter and not is_role_match(job_title, job_role_filter):
+            continue
+            
+        seen_apply_links.add(apply_link)
         
-        if job_links:
-            for jl in job_links:
-                job_title = jl.text.strip()
-                j_href = jl['href']
-                apply_link = "https://www.workatastartup.com" + j_href if j_href.startswith('/') else j_href
-                
-                key = (comp_name, job_title, apply_link)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                
-                # Job specific row details
-                j_row = jl.parent
-                for _ in range(4):
-                    if j_row and j_row.name in ['div', 'li', 'tr']:
-                        if len(j_row.find_all(['span', 'div', 'a'])) > 2:
+        # Locate enclosing company card container and company profile link
+        card = jl.parent
+        if comp_name == "YC Startup":
+            p = jl.parent
+            for _ in range(10):
+                if not p:
+                    break
+                candidates = []
+                for a in p.find_all('a', href=lambda h: h and re.search(r'/companies/[a-zA-Z0-9_-]+$', h)):
+                    href = a['href']
+                    if href.endswith('/companies'):
+                        continue
+                    txt = " ".join(a.text.split())
+                    txt_lower = txt.lower()
+                    if txt_lower.startswith('see all') or txt_lower.startswith('view all') or txt_lower.startswith('view job') or txt_lower == 'apply':
+                        continue
+                    if len(txt) > 0:
+                        candidates.append((a, txt, href))
+                        
+                if candidates:
+                    card = p
+                    best_link, raw_comp_text, comp_href = candidates[0]
+                    for cand in candidates:
+                        if 'hover:underline' in (cand[0].get('class') or []):
+                            best_link, raw_comp_text, comp_href = cand
                             break
-                    if j_row:
-                        j_row = j_row.parent
-                r_text = j_row.text if j_row else card_text
-                
-                salary_str = "N/A"
-                sal_match = re.search(r'\$\d+K?\s*-\s*\$\d+K?|\$\d+,\d+\s*-\s*\$\d+,\d+|[£€]\d+K?\s*-\s*[£€]\d+K?|₹\d+[MK]?\s*-\s*₹\d+[MK]?', r_text, re.IGNORECASE)
-                if sal_match:
-                    salary_str = sal_match.group(0)
-                    
-                job_type = "Fulltime"
-                if "Fulltime" in r_text or "Full-time" in r_text:
-                    job_type = "Fulltime"
-                elif "Intern" in r_text or "Internship" in r_text:
-                    job_type = "Internship"
-                elif "Contract" in r_text:
-                    job_type = "Contract"
-                    
-                comp_clean = comp_name if (comp_name and comp_name != "N/A") else "YC Verified Startup"
-                loc_clean = loc_str if (loc_str and loc_str != "N/A") else (location or "Remote / Worldwide")
-                details_clean = " ".join(card_text.split())[:350]
-                details_full = f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean
-                if salary_str and salary_str != "N/A":
-                    details_full += f" | Salary: {salary_str}"
-                if comp_batch:
-                    details_full += f" | YC Batch: {comp_batch}"
-                final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.workatastartup.com")
+                            
+                    comp_url = "https://www.workatastartup.com" + comp_href if comp_href.startswith('/') else comp_href
+                    batch_match = re.search(r'\(([A-Z0-9]+)\)', raw_comp_text)
+                    if batch_match:
+                        comp_batch = batch_match.group(1)
+                    parts = re.split(r'[\u2022\u2013\u2014|\t\n\xb7]', raw_comp_text)
+                    if parts:
+                        comp_name = re.sub(r'\s*\([A-Z0-9]+\).*', '', parts[0]).strip()
+                        if len(parts) > 1:
+                            comp_tagline = parts[1].strip()
+                    if not comp_name or len(comp_name) < 2 or 'see all' in comp_name.lower():
+                        slug_match = re.search(r'/companies/([a-zA-Z0-9_-]+)', comp_href)
+                        if slug_match:
+                            comp_name = slug_match.group(1).replace('-', ' ').title()
+                    break
+                p = p.parent
 
-                results.append({
-                    "Job Role": job_title,
-                    "Company Name": comp_clean,
-                    "Location": loc_clean,
-                    "Date Posted": "2026-09-12",
-                    "Apply Link": apply_link,
-                    "Company Link": final_comp_url,
-                    "No. of Applicants": "Actively Hiring",
-                    "Company / Job Details": details_full,
-                    "Source": "Work at a Startup"
-                })
+        # Extract details, salary, and location from card / job row
+        card_text = " ".join(card.text.split()) if card else ""
+        
+        # Check inside jl for modern layout meta
+        line_clamp = jl.find(class_=lambda c: c and 'line-clamp-2' in c)
+        if line_clamp:
+            r_text = " ".join(line_clamp.text.split())
         else:
-            # Company has no specific open job links (e.g. Arva AI, Upsolve AI)
-            # Add general application entry so 100% of matching startups are saved!
-            key = (comp_name, job_role_filter, comp_url)
-            if key not in seen_keys:
-                seen_keys.add(key)
+            j_row = jl.parent
+            for _ in range(4):
+                if j_row and j_row.name in ['div', 'li', 'tr'] and len(j_row.find_all(['span', 'div', 'a'])) > 2:
+                    break
+                if j_row:
+                    j_row = j_row.parent
+            r_text = " ".join(j_row.text.split()) if j_row else card_text
+        
+        salary_str = "N/A"
+        sal_match = re.search(r'\$\d+K?\s*-\s*\$\d+K?|\$\d+,\d+\s*-\s*\$\d+,\d+|[£€]\d+K?\s*-\s*[£€]\d+K?|₹\d+[MK]?\s*-\s*₹\d+[MK]?', r_text, re.IGNORECASE)
+        if sal_match:
+            salary_str = sal_match.group(0)
+            
+        loc_str = "Remote"
+        loc_tokens = []
+        for token in re.split(r'[\n\t•|\xb7/]', r_text):
+            t_clean = token.strip()
+            if any(k in t_clean for k in ['London', 'United Kingdom', 'UK', 'San Francisco', 'Mountain View', 'Austin', 'New York', 'India', 'IN', 'Remote', 'CA', 'NY', 'US', 'GB']):
+                if t_clean not in loc_tokens and len(t_clean) < 60 and not any(ch in t_clean for ch in ['$','£','€','₹','%']):
+                    loc_tokens.append(t_clean)
+        if loc_tokens:
+            loc_str = " / ".join(loc_tokens[:2])
+            
+        # Remote mode validation:
+        if work_mode_filter and "remote" in work_mode_filter.lower():
+            if "remote" not in loc_str.lower() and "remote" not in r_text.lower() and "remote" not in card_text.lower():
+                loc_str = f"{loc_str} (Remote)" if loc_str and loc_str != "Remote / Various" else "Remote"
                 
-                comp_clean = comp_name if (comp_name and comp_name != "N/A") else "YC Verified Startup"
-                loc_clean = loc_str if (loc_str and loc_str != "N/A") else (location or "Remote / Worldwide")
-                role_label = f"{job_role_filter} (General Application)" if job_role_filter else "General Application"
-                details_clean = " ".join(card_text.split())[:350]
-                details_full = f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean
-                if comp_batch:
-                    details_full += f" | YC Batch: {comp_batch}"
-                
-                # Check for direct Apply button link inside card if available
-                apply_btn = card.find('a', href=lambda h: h and ('apply' in h or '/companies/' in h))
-                apply_link = comp_url
-                if apply_btn and apply_btn.get('href'):
-                    b_href = apply_btn['href']
-                    apply_link = "https://www.workatastartup.com" + b_href if b_href.startswith('/') else b_href
-                final_comp_url = comp_url if (comp_url and comp_url != "N/A" and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.workatastartup.com")
-                    
-                results.append({
-                    "Job Role": role_label,
-                    "Company Name": comp_clean,
-                    "Location": loc_clean,
-                    "Date Posted": "2026-09-12",
-                    "Apply Link": apply_link,
-                    "Company Link": final_comp_url,
-                    "No. of Applicants": "Actively Hiring",
-                    "Company / Job Details": details_full,
-                    "Source": "Work at a Startup"
-                })
-                
+        comp_clean = comp_name if (comp_name and comp_name != "N/A") else "YC Verified Startup"
+        loc_clean = loc_str if (loc_str and loc_str != "N/A") else "Remote / Worldwide"
+        
+        details_clean = card_text[:350]
+        details_full = f"{comp_tagline} - {details_clean}" if comp_tagline else details_clean
+        if salary_str and salary_str != "N/A":
+            details_full += f" | Salary: {salary_str}"
+        if comp_batch:
+            details_full += f" | YC Batch: {comp_batch}"
+            
+        final_comp_url = comp_url if (comp_url and comp_url.startswith("http")) else get_company_website(comp_clean, fallback_portal_url="https://www.workatastartup.com")
+
+        results.append({
+            "Job Role": job_title,
+            "Company Name": comp_clean,
+            "Location": loc_clean,
+            "Date Posted": normalize_date_posted("today"),
+            "Apply Link": apply_link,
+            "Company Link": final_comp_url,
+            "No. of Applicants": "Actively Hiring",
+            "Company / Job Details": details_full,
+            "Source": "Work at a Startup"
+        })
+        
     return results
 
 async def scrape_workatastartup_jobs(target_url=None, job_role="", location="", industry="", company_size="", min_experience="", max_scrolls=20, headless=False, filter_params=None, interactive=False, **kwargs):
@@ -233,7 +228,13 @@ async def scrape_workatastartup_jobs(target_url=None, job_role="", location="", 
     fp = filter_params or {}
     effective_role = fp.get("query") or job_role
     effective_loc = fp.get("locations") or fp.get("location") or location or ""
-    
+    work_mode_filter = fp.get("work_mode") or kwargs.get("work_mode") or ("remote" if "remote" in effective_loc.lower() else "")
+
+    if work_mode_filter and "remote" in work_mode_filter.lower():
+        effective_loc = "Remote"
+        if fp:
+            fp["locations"] = "Remote"
+            
     if target_url and target_url.strip().startswith("http"):
         url = target_url.strip()
     elif fp:
@@ -316,8 +317,8 @@ async def scrape_workatastartup_jobs(target_url=None, job_role="", location="", 
                 previous_height = current_height
                 
             html = await page.content()
-            filter_term = job_role if job_role and not target_url else ""
-            jobs_data = parse_workatastartup_html(html, filter_term)
+            filter_term = effective_role if effective_role and not target_url else ""
+            jobs_data = parse_workatastartup_html(html, job_role_filter=filter_term, work_mode_filter=work_mode_filter)
             print(f"[+] Work at a Startup (YC): Extracted {len(jobs_data)} job postings successfully.")
             
         except Exception as err:

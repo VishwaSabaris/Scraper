@@ -11,9 +11,38 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
     Scrapes job listings from naukri.com using Playwright chromium persistent context.
     Supports dynamic filter parameters and deep pagination.
     """
-    fp = filter_params or {}
-    effective_role = fp.get("keywords") or job_role
-    effective_loc = fp.get("location") or location or ""
+    fp = dict(filter_params or {})
+    for k, v in kwargs.items():
+        if v is not None and k not in fp:
+            fp[k] = v
+
+    effective_role = fp.get("k") or fp.get("keywords") or job_role
+    effective_loc = fp.get("l") or fp.get("location") or location or ""
+
+    # Map work_mode to wfhType if not directly provided:
+    # 0 = Work from office, 1 = Hybrid, 2 = Remote
+    if "wfhType" not in fp and "work_mode" in fp:
+        wm = str(fp["work_mode"]).lower().strip()
+        if any(w in wm for k in ["both", "all"]):
+            fp["wfhType"] = "0,1,2"
+        elif ("remote" in wm or "wfh" in wm or "home" in wm) and "hybrid" in wm:
+            fp["wfhType"] = "1,2"
+        elif any(w in wm for w in ["remote", "wfh", "home"]):
+            fp["wfhType"] = "2"
+        elif "hybrid" in wm:
+            fp["wfhType"] = "1"
+        else:
+            fp["wfhType"] = "0"
+
+    # Map experience=0 to include campus flag
+    if fp.get("experience") == 0 or fp.get("experience") == "0":
+        fp["naukriCampus"] = "true"
+
+    # Desktop search source & event trackers
+    if "qproductJobSource" not in fp:
+        fp["qproductJobSource"] = "2"
+    if "nignbevent_src" not in fp:
+        fp["nignbevent_src"] = "jobsearchDeskGNB"
     
     print(f"[*] Naukri: Fetching job listings for '{effective_role}' in '{effective_loc or 'Any'}'...")
     
@@ -67,7 +96,7 @@ async def scrape_naukri_jobs(job_role, location="", max_pages=1, headless=False,
                 if effective_loc:
                     extra_params["l"] = effective_loc
                 for k, v in fp.items():
-                    if k not in ["role", "location", "k", "l", "pageNo"]:
+                    if k not in ["role", "location", "k", "l", "pageNo", "cityTypeGid"]:
                         extra_params[k] = v
                         
                 query_str = urllib.parse.urlencode(extra_params)

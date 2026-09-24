@@ -59,7 +59,10 @@ def is_role_match(job_title, requested_role):
         "ml": ["ml", "machine learning", "ai engineer", "ai developer", "deep learning"],
         "machine learning": ["ml", "machine learning", "ai engineer", "ai developer", "deep learning"],
         "data analyst": ["data analyst", "bi analyst", "business intelligence", "data analytics"],
-        "data engineer": ["data engineer", "data platform", "etl engineer", "data pipeline"]
+        "data engineer": ["data engineer", "data platform", "etl engineer", "data pipeline"],
+        "lead generation": ["lead generation", "bdr", "sdr", "sales development", "business development", "demand generation", "inside sales", "outreach", "lead gen", "sales"],
+        "lead gen": ["lead generation", "bdr", "sdr", "sales development", "business development", "demand generation", "inside sales", "outreach", "lead gen", "sales"],
+        "business development": ["business development", "lead generation", "bdr", "sdr", "sales development", "account executive", "inside sales", "sales executive"]
     }
     
     for key, syn_list in synonyms.items():
@@ -335,9 +338,16 @@ def sanitize_job_record(item: Dict[str, Any], requested_role: str = "", default_
     else:
         no_of_applicants = raw_apps
 
-    # 8. Company / Job Details / Job Description
-    raw_details = str(item.get("Company / Job Details", "") or item.get("job_description", "")).strip()
-    if not raw_details or raw_details.lower() in ["n/a", "null", "nan", "none", ""]:
+    # 8. Unified Job Description (consolidating 'job_description' and 'Company / Job Details')
+    d_candidates = [
+        str(item.get(k, "")).strip()
+        for k in ["Job Description", "job_description", "Company / Job Details"]
+        if str(item.get(k, "")).strip() and str(item.get(k, "")).strip().lower() not in ["n/a", "null", "nan", "none", ""]
+    ]
+    if d_candidates:
+        d_candidates.sort(key=lambda s: (not s.startswith("Company:") and not s.startswith("Role:"), len(s)), reverse=True)
+        raw_details = d_candidates[0]
+    else:
         raw_details = f"Company: {raw_company} | Location: {raw_loc} | Role: {raw_role} | Source: {source} | Actively hiring qualified candidates."
 
     return {
@@ -348,14 +358,13 @@ def sanitize_job_record(item: Dict[str, Any], requested_role: str = "", default_
         "Apply Link": apply_link,
         "Company Link": comp_link,
         "No. of Applicants": no_of_applicants,
-        "Company / Job Details": raw_details,
+        "Job Description": raw_details,
         "Source": source,
         "website": comp_link,
-        "apply_link_url": apply_link,
-        "job_description": raw_details
+        "apply_link_url": apply_link
     }
 
-def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_location=""):
+def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_location="", overwrite=False):
     """
     Saves scraped job listings to CSV with full automatic sanitization, deduplication,
     and 100% guarantee of zero empty or 'N/A' fields.
@@ -364,8 +373,8 @@ def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_l
     canonical_headers = [
         "Job Role", "Company Name", "Location", "Date Posted",
         "Apply Link", "Company Link", "No. of Applicants",
-        "Company / Job Details", "Source",
-        "website", "apply_link_url", "job_description"
+        "Job Description", "Source",
+        "website", "apply_link_url"
     ]
     
     if not data:
@@ -380,8 +389,8 @@ def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_l
     existing_links = set()
     existing_rows = []
     
-    # Read existing data if file exists and has content
-    if os.path.exists(filename) and os.path.getsize(filename) > 0:
+    # Read existing data if file exists, has content, and overwrite is False
+    if not overwrite and os.path.exists(filename) and os.path.getsize(filename) > 0:
         try:
             with open(filename, 'r', encoding='utf-8-sig') as input_file:
                 reader = csv.DictReader(input_file)
@@ -389,6 +398,13 @@ def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_l
                     for row in reader:
                         clean_row = sanitize_job_record(row, requested_role=requested_role, default_location=default_location)
                         link = clean_row.get("Apply Link", "")
+                        # Drop corrupt, redirect, or non-http links
+                        if not link or link.startswith("/goto?url=") or not link.startswith("http"):
+                            continue
+                        # If requested_role is specified, enforce role match on existing rows to prevent cross-role pollution
+                        row_role = clean_row.get("Job Role", "")
+                        if requested_role and not is_role_match(row_role, requested_role):
+                            continue
                         if link:
                             existing_links.add(link)
                         existing_rows.append(clean_row)
@@ -400,6 +416,9 @@ def save_to_csv(data, filename="linkedin_jobs.csv", requested_role="", default_l
     for item in data:
         clean_item = sanitize_job_record(item, requested_role=requested_role, default_location=default_location)
         link = clean_item.get("Apply Link", "")
+        # Drop corrupt or non-http links
+        if not link or link.startswith("/goto?url=") or not link.startswith("http"):
+            continue
         if link not in existing_links:
             new_records.append(clean_item)
             existing_links.add(link)

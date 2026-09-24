@@ -354,6 +354,9 @@ def process_job_csv(filepath: str):
             
     total_rows = len(rows)
     print(f"[*] Loaded {total_rows} listings.", flush=True)
+    if total_rows == 0:
+        print(f"[*] '{filepath}' has 0 rows. Skipping processing.", flush=True)
+        return
     
     cache = load_cache()
     unique_companies = list(set([r["Company Name"] for r in rows if r.get("Company Name")]))
@@ -379,7 +382,7 @@ def process_job_csv(filepath: str):
             r["No. of Applicants"] = "Actively Hiring"
         r["website"] = r.get("Company Link", "")
         r["apply_link_url"] = r.get("Apply Link", "")
-        r["job_description"] = r.get("Company / Job Details", "")
+        r["Job Description"] = (r.get("Job Description") or r.get("Company / Job Details") or r.get("job_description") or "").strip()
             
     # Save cache
     save_cache(cache)
@@ -387,22 +390,25 @@ def process_job_csv(filepath: str):
     canonical_headers = [
         "Job Role", "Company Name", "Location", "Date Posted",
         "Apply Link", "Company Link", "No. of Applicants",
-        "Company / Job Details", "Source",
-        "website", "apply_link_url", "job_description"
+        "Job Description", "Source",
+        "website", "apply_link_url"
     ]
     
-    # Save CSV
+    # Save CSV atomically
+    tmp_path = f"{filepath}.tmp"
     try:
-        with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=canonical_headers)
+        with open(tmp_path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=canonical_headers, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(rows)
+        if os.path.exists(tmp_path):
+            os.replace(tmp_path, filepath)
     except PermissionError:
         base, ext = os.path.splitext(filepath)
         fallback_path = f"{base}_enriched{ext}"
         print(f"[!] '{filepath}' is locked by another app. Saving to '{fallback_path}'.", flush=True)
         with open(fallback_path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=canonical_headers)
+            writer = csv.DictWriter(f, fieldnames=canonical_headers, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(rows)
         filepath = fallback_path

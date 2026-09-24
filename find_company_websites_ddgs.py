@@ -391,7 +391,8 @@ def search_company_website_ddgs(
     """
     if not company_name or str(company_name).strip().lower() in {
         "n/a", "unknown", "confidential", "jooble employer", "foundit recruiter",
-        "careerbuilder employer", "indeed employer", "nan", "null", "none", ""
+        "careerbuilder employer", "indeed employer", "various employer",
+        "wellfound verified employer", "various", "nan", "null", "none", ""
     }:
         return "N/A"
 

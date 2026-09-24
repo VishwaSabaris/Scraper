@@ -100,13 +100,32 @@ async def scrape_linkedin_jobs(job_role, location="", fetch_details=False, batch
     effective_role = fp.get("keywords") or job_role
     effective_loc = fp.get("location") or location or ""
     
+    # Detect if remote filtering is requested
+    is_remote_mode = (
+        fp.get("f_WT") == "2" or
+        "remote" in (fp.get("work_mode") or "").lower() or
+        "remote" in kwargs.get("work_mode", "").lower() or
+        "remote" in effective_role.lower() or
+        "remote" in (effective_loc or "").lower()
+    )
+    
+    if is_remote_mode:
+        if "remote" not in effective_role.lower():
+            effective_role = f"{effective_role} Remote"
+        if effective_loc.lower().strip() in ["remote", "worldwide", "any"]:
+            effective_loc = ""
+            
     params = {
-        "keywords": effective_role,
-        "location": effective_loc
+        "keywords": effective_role
     }
+    if effective_loc:
+        params["location"] = effective_loc
+
     for k in ["f_TPR", "f_WT", "f_E", "f_JT", "f_AL", "f_EA", "sortBy"]:
         if fp.get(k):
             params[k] = fp[k]
+    if is_remote_mode:
+        params["f_WT"] = "2"
     if "f_TPR" not in params:
         params["f_TPR"] = "r604800"
         
@@ -122,7 +141,7 @@ async def scrape_linkedin_jobs(job_role, location="", fetch_details=False, batch
         context = await create_stealth_context(browser)
         
         page = await context.new_page()
-        print(f"[*] LinkedIn: Searching for '{effective_role}' in '{effective_loc}' ({base_url})...")
+        print(f"[*] LinkedIn: Searching for '{effective_role}' in '{effective_loc or 'Worldwide / Remote'}' ({base_url})...")
         await page.goto(base_url)
         await human_delay(4, 7)
         
@@ -158,6 +177,17 @@ async def scrape_linkedin_jobs(job_role, location="", fetch_details=False, batch
                 
                 if not is_role_match(job_role_title, job_role):
                     continue
+
+                title_lower = job_role_title.lower()
+                
+                # If remote mode was requested, reject any card with explicit onsite requirements
+                if is_remote_mode:
+                    onsite_flags = ["onsite", "on-site", "in-office", "wfo only", "office only", "no remote", "onsite 4x", "onsite 3x", "onsite 5x"]
+                    if any(flag in title_lower for flag in onsite_flags):
+                        continue
+                    workplace_badge = card.find(class_=lambda x: x and ('workplace' in x.lower() or 'badge' in x.lower()))
+                    if workplace_badge and ("on-site" in workplace_badge.text.lower() or "onsite" in workplace_badge.text.lower()):
+                        continue
                     
                 company_el = card.find('h4', class_='base-search-card__subtitle') or card.find(class_='base-search-card__subtitle')
                 company_name = company_el.text.strip() if company_el else "N/A"
@@ -176,7 +206,13 @@ async def scrape_linkedin_jobs(job_role, location="", fetch_details=False, batch
                 post_date = date_el.text.strip() if date_el else "N/A"
                 
                 comp_clean = company_name if (company_name and company_name != "N/A") else "LinkedIn Verified Employer"
-                loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
+                if is_remote_mode:
+                    if job_location and job_location != "N/A":
+                        loc_clean = job_location if "remote" in job_location.lower() else f"{job_location} (Remote)"
+                    else:
+                        loc_clean = "Remote"
+                else:
+                    loc_clean = job_location if (job_location and job_location != "N/A") else (location or "Bengaluru, Karnataka, India")
                 details_text = f"Company: {comp_clean} | Location: {loc_clean} | Role: {job_role_title} | Source: LinkedIn | Actively hiring qualified talent."
 
                 if not any(item['Apply Link'] == stable_apply_link for item in jobs_data):

@@ -81,6 +81,10 @@ class UniversalJobFilter:
     # 12. Sorting
     sort_by: str = "relevance" # 'relevance', 'date', 'salary'
 
+    def __post_init__(self):
+        if self.location and "remote" in self.location.lower().strip() and not self.work_mode:
+            self.work_mode = "remote"
+
 
 # Capability registry mapping portal names to supported filter attributes
 PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
@@ -138,8 +142,9 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
         "work_mode", "easy_apply", "under_10_applicants", "company", "industry", "department", "salary_min", "sort_by"
     ],
     "naukri": [
-        "keywords", "job_title", "location", "experience_min", "salary_min", "job_type",
-        "work_mode", "date_posted_days", "education", "industry", "department", "company", "skills"
+        "keywords", "job_title", "location", "experience_min", "experience_max", "experience_level",
+        "salary_min", "salary_max", "job_type", "work_mode", "date_posted_days", "education",
+        "industry", "department", "company", "skills", "sort_by", "employer_type", "distance_km", "freshers_only"
     ],
     "careerbuilder": [
         "keywords", "job_title", "location", "date_posted_days", "job_type", "work_mode",
@@ -186,7 +191,7 @@ PORTAL_CAPABILITY_MATRIX: Dict[str, List[str]] = {
         "company", "experience_level", "date_posted_days"
     ],
     "workatastartup": [
-        "keywords", "job_title", "location", "job_type", "experience_min", "company_size",
+        "keywords", "job_title", "location", "work_mode", "job_type", "experience_min", "company_size",
         "industry", "equity", "salary_min"
     ],
     "ziprecruiter": [
@@ -708,11 +713,35 @@ class FilterEngine:
     @classmethod
     def _build_linkedin(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
         role = cls.get_effective_role(uf)
+        is_remote = (
+            (uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower())) or
+            (uf.location and "remote" in uf.location.lower().strip())
+        )
+        is_hybrid = uf.work_mode and "hybrid" in uf.work_mode.lower()
+        is_wfo = uf.work_mode and ("wfo" in uf.work_mode.lower() or "office" in uf.work_mode.lower() or "onsite" in uf.work_mode.lower())
+
+        effective_keywords = role
+        if is_remote:
+            if "remote" not in effective_keywords.lower():
+                effective_keywords = f"{effective_keywords} Remote"
+        elif is_hybrid:
+            if "hybrid" not in effective_keywords.lower():
+                effective_keywords = f"{effective_keywords} Hybrid"
+        elif is_wfo:
+            if "on-site" not in effective_keywords.lower() and "onsite" not in effective_keywords.lower():
+                effective_keywords = f"{effective_keywords} On-site"
+
         params: Dict[str, Any] = {
-            "keywords": role
+            "keywords": effective_keywords
         }
+        
+        # If location is simply 'remote', 'worldwide', or 'any', omit location parameter
+        # so LinkedIn searches worldwide and doesn't match geographic towns named 'Remote'
         if uf.location:
-            params["location"] = uf.location
+            loc_clean = uf.location.strip()
+            if loc_clean.lower() not in ["remote", "worldwide", "any"]:
+                params["location"] = loc_clean
+
         if uf.date_posted_days:
             if uf.date_posted_days <= 1:
                 params["f_TPR"] = "r86400"
@@ -720,14 +749,13 @@ class FilterEngine:
                 params["f_TPR"] = "r604800"
             elif uf.date_posted_days <= 30:
                 params["f_TPR"] = "r2592000"
-        if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
-                params["f_WT"] = "2"
-            elif "hybrid" in wm:
-                params["f_WT"] = "3"
-            elif "wfo" in wm or "office" in wm:
-                params["f_WT"] = "1"
+
+        if is_remote:
+            params["f_WT"] = "2"
+        elif is_hybrid:
+            params["f_WT"] = "3"
+        elif is_wfo:
+            params["f_WT"] = "1"
         if uf.experience_level:
             el = uf.experience_level.lower()
             if "intern" in el:
@@ -764,34 +792,321 @@ class FilterEngine:
 
     @classmethod
     def _build_naukri(cls, uf: UniversalJobFilter) -> Dict[str, Any]:
+        """
+        Translates UniversalJobFilter into exact, case-sensitive Naukri URL query parameters.
+        Matches live Naukri.com search routing, facet IDs, and parameter keys:
+        - k: keywords / job role
+        - l: location name
+        - cityTypeGid: city grouping ID (e.g. 9508 for Bangalore, 9513 for Chennai)
+        - experience: experience years/range (e.g. '0', '1', '2', '3', '3-5')
+        - wfhType: 0 (Work from office), 1 (Hybrid), 2 (Remote)
+        - ctcFilter: salary CTC bracket (0to3, 3to6, 6to10, 10to15, 15to25, 25to50, 50to75, 75to100, 100to500)
+        - department: exact department name from the 32 official Naukri departments
+        - jobAge: freshness in days (1, 3, 7, 15, 30)
+        - sort: 'r' (Relevance), 'f' (Freshness / Date)
+        - jobType: '1' (Full-time), '2' (Part-time), '3' (Contractual), '4' (Internship)
+        - postedBy: '1' (Company), '2' (Consultant)
+        - education: exact qualification string (e.g. 'B.Tech/B.E.', 'MCA', 'MBA/PGDM')
+        - industry: exact industry string (e.g. 'IT Services & Consulting', 'Software Product')
+        - qproductJobSource: '2' (Desktop job search source)
+        - nignbevent_src: 'jobsearchDeskGNB' (Desktop GNB search event)
+        - naukriCampus: 'true' (appended for 0-experience / campus / fresher jobs)
+        """
         role = cls.get_effective_role(uf)
         params: Dict[str, Any] = {
-            "k": role,
-            "keywords": role,
-            "qproductJobSource": "2",
-            "naukriCampus": "true",
-            "jobPostType": "1"
+            "k": role
         }
+        
+        # 1. Location
         if uf.location:
-            params["l"] = uf.location.lower()
-            params["location"] = uf.location
-        if uf.experience_min is not None:
+            params["l"] = uf.location
+
+        # Standard desk navigation tracking parameters
+        params["qproductJobSource"] = "2"
+        params["nignbevent_src"] = "jobsearchDeskGNB"
+
+        # 2. Experience Filter (direct integer value or range)
+        if uf.experience_min is not None and uf.experience_max is not None:
+            params["experience"] = f"{uf.experience_min}-{uf.experience_max}"
+            if uf.experience_min == 0:
+                params["naukriCampus"] = "true"
+        elif uf.experience_min is not None:
             params["experience"] = str(uf.experience_min)
-        if uf.salary_min or uf.salary_max:
-            # Map salary to CTC filter string like '6to10', '3to6', '10to15'
-            smin_lakhs = (uf.salary_min or 0) // 100000 if (uf.salary_min or 0) >= 100000 else (uf.salary_min or 0)
-            smax_lakhs = (uf.salary_max or 1000000) // 100000 if (uf.salary_max or 1000000) >= 100000 else (uf.salary_max or 10)
-            params["ctcFilter"] = f"{smin_lakhs}to{smax_lakhs}"
+            if uf.experience_min == 0:
+                params["naukriCampus"] = "true"
+        elif uf.freshers_only:
+            params["experience"] = "0"
+            params["naukriCampus"] = "true"
+        elif uf.experience_level:
+            el = uf.experience_level.lower().strip()
+            if any(k in el for k in ["fresher", "intern", "entry", "0", "campus"]):
+                params["experience"] = "0"
+                params["naukriCampus"] = "true"
+            elif "associate" in el:
+                params["experience"] = "1-2"
+            elif "mid" in el:
+                params["experience"] = "3-5"
+            elif any(k in el for k in ["senior", "sr"]):
+                params["experience"] = "6-10"
+            elif any(k in el for k in ["lead", "director", "exec"]):
+                params["experience"] = "10+"
+
+        # 3. Work Mode Filter (wfhType: 0=Office, 1=Hybrid, 2=Remote)
         if uf.work_mode:
-            wm = uf.work_mode.lower()
-            if "remote" in wm or "wfh" in wm:
+            wm = uf.work_mode.lower().strip()
+            if any(k in wm for k in ["both", "all"]):
+                params["wfhType"] = "0,1,2"
+            elif ("remote" in wm or "wfh" in wm or "home" in wm) and "hybrid" in wm:
+                params["wfhType"] = "1,2"
+            elif any(k in wm for k in ["remote", "wfh", "home"]):
                 params["wfhType"] = "2"
             elif "hybrid" in wm:
-                params["wfhType"] = "3"
+                params["wfhType"] = "1"
+            elif any(k in wm for k in ["office", "wfo", "onsite", "on-site"]):
+                params["wfhType"] = "0"
             else:
                 params["wfhType"] = "0"
+
+        # 4. Salary / CTC Filter (exact Naukri brackets: 0to3, 3to6, 6to10, 10to15, 15to25, 25to50, 50to75, 75to100, 100to500)
+        if uf.salary_min or uf.salary_max:
+            smin = uf.salary_min or 0
+            if smin < 300000:
+                params["ctcFilter"] = "0to3"
+            elif smin < 600000:
+                params["ctcFilter"] = "3to6"
+            elif smin < 1000000:
+                params["ctcFilter"] = "6to10"
+            elif smin < 1500000:
+                params["ctcFilter"] = "10to15"
+            elif smin < 2500000:
+                params["ctcFilter"] = "15to25"
+            elif smin < 5000000:
+                params["ctcFilter"] = "25to50"
+            elif smin < 7500000:
+                params["ctcFilter"] = "50to75"
+            elif smin < 10000000:
+                params["ctcFilter"] = "75to100"
+            else:
+                params["ctcFilter"] = "100to500"
+
+        # 5. Freshness / Date Posted (jobAge: 1, 3, 7, 15, 30)
         if uf.date_posted_days:
-            params["jobAge"] = str(uf.date_posted_days)
+            days = uf.date_posted_days
+            if days <= 1:
+                params["jobAge"] = "1"
+            elif days <= 3:
+                params["jobAge"] = "3"
+            elif days <= 7:
+                params["jobAge"] = "7"
+            elif days <= 15:
+                params["jobAge"] = "15"
+            else:
+                params["jobAge"] = "30"
+
+        # 6. Sort Order (sort: 'r'=Relevance, 'f'=Freshness / Date Posted)
+        if uf.sort_by:
+            params["sort"] = "f" if any(k in uf.sort_by.lower() for k in ["date", "fresh", "recent"]) else "r"
+
+        # 7. Employment / Job Type (jobType: 1=Full-time, 2=Part-time, 3=Contractual, 4=Internship)
+        if uf.job_type:
+            jt = uf.job_type.lower().strip()
+            if any(k in jt for k in ["part"]):
+                params["jobType"] = "2"
+            elif any(k in jt for k in ["contract", "temp"]):
+                params["jobType"] = "3"
+            elif any(k in jt for k in ["intern"]):
+                params["jobType"] = "4"
+            else:
+                params["jobType"] = "1"
+
+        # 8. Employer Type (postedBy: 1=Company, 2=Consultant)
+        if uf.employer_type:
+            et = uf.employer_type.lower().strip()
+            params["postedBy"] = "2" if any(k in et for k in ["consultant", "agency", "recruiter"]) else "1"
+
+        # 9. Education Qualification (exact letter and casing mapping)
+        if uf.education:
+            ed_raw = uf.education.strip()
+            ed_lower = ed_raw.lower()
+            if any(k in ed_lower for k in ["b.e/b.tech", "be/btech", "b.tech", "btech", "b.e", "be"]):
+                params["education"] = "B.Tech/B.E."
+            elif "mca" in ed_lower:
+                params["education"] = "MCA"
+            elif any(k in ed_lower for k in ["m.tech", "mtech"]):
+                params["education"] = "M.Tech"
+            elif any(k in ed_lower for k in ["ms", "m.sc", "msc"]):
+                params["education"] = "MS/M.Sc(Science)"
+            elif "bca" in ed_lower:
+                params["education"] = "BCA"
+            elif any(k in ed_lower for k in ["b.sc", "bsc"]):
+                params["education"] = "B.Sc"
+            elif any(k in ed_lower for k in ["b.com", "bcom"]):
+                params["education"] = "B.Com"
+            elif any(k in ed_lower for k in ["b.a", "ba"]):
+                params["education"] = "B.A"
+            elif any(k in ed_lower for k in ["b.b.a", "bba", "bms"]):
+                params["education"] = "B.B.A/B.M.S"
+            elif any(k in ed_lower for k in ["mba", "pgdm"]):
+                params["education"] = "MBA/PGDM"
+            elif "any graduate" in ed_lower:
+                params["education"] = "Any Graduate"
+            elif "any post" in ed_lower:
+                params["education"] = "Any Postgraduate"
+            else:
+                params["education"] = ed_raw
+
+        # 10. Industry (exact letter and casing mapping)
+        if uf.industry:
+            ind_raw = uf.industry.strip()
+            ind_lower = ind_raw.lower()
+            if any(k in ind_lower for k in ["it services", "information technology", "tech", "it"]):
+                params["industry"] = "IT Services & Consulting"
+            elif any(k in ind_lower for k in ["software product", "product"]):
+                params["industry"] = "Software Product"
+            elif any(k in ind_lower for k in ["financial", "finance", "bfsi"]):
+                params["industry"] = "Financial Services"
+            elif "banking" in ind_lower:
+                params["industry"] = "Banking"
+            elif any(k in ind_lower for k in ["health", "pharma", "life science"]):
+                params["industry"] = "Healthcare & Life Sciences"
+            elif any(k in ind_lower for k in ["internet", "ecommerce", "e-commerce"]):
+                params["industry"] = "Internet"
+            elif any(k in ind_lower for k in ["recruitment", "staffing"]):
+                params["industry"] = "Recruitment / Staffing"
+            elif any(k in ind_lower for k in ["education", "edtech", "training"]):
+                params["industry"] = "Education / Training"
+            elif any(k in ind_lower for k in ["telecom", "telecommunication"]):
+                params["industry"] = "Telecommunication"
+            elif any(k in ind_lower for k in ["auto", "automotive", "automobile"]):
+                params["industry"] = "Automobile"
+            else:
+                params["industry"] = ind_raw
+
+        # 11. Department (Exact mapping for all 32 official Naukri UI departments)
+        if uf.department:
+            dept_raw = uf.department.strip()
+            dept_lower = dept_raw.lower()
+            
+            # Official 32 Naukri departments list:
+            canonical_departments = [
+                "Engineering - Software & QA",
+                "Sales & Business Development",
+                "Customer Success, Service & Operations",
+                "Data Science & Analytics",
+                "IT & Information Security",
+                "Engineering - Hardware & Networks",
+                "Marketing & Communication",
+                "Human Resources",
+                "Finance & Accounting",
+                "BFSI, Investments & Trading",
+                "Research & Development",
+                "Healthcare & Life Sciences",
+                "Teaching & Training",
+                "Production, Manufacturing & Engineering",
+                "Other",
+                "Administration & Facilities",
+                "Product Management",
+                "Content, Editorial & Journalism",
+                "Procurement & Supply Chain",
+                "Quality Assurance",
+                "UX, Design & Architecture",
+                "Food, Beverage & Hospitality",
+                "Consulting",
+                "Project & Program Management",
+                "Media Production & Entertainment",
+                "Strategic & Top Management",
+                "Construction & Site Engineering",
+                "CSR & Social Service",
+                "Environment Health & Safety",
+                "Legal & Regulatory",
+                "Merchandising, Retail & eCommerce",
+                "Security Services"
+            ]
+            
+            # Exact match check
+            matched_dept = None
+            for c_dept in canonical_departments:
+                if dept_lower == c_dept.lower():
+                    matched_dept = c_dept
+                    break
+                    
+            if not matched_dept:
+                # Intelligent alias / keyword mapping to official 32 departments
+                if any(k in dept_lower for k in ["data science", "analytics", "data analyst", "data scientist", "machine learning", "ai", "artificial intelligence", "bi", "business intelligence", "deep learning"]):
+                    matched_dept = "Data Science & Analytics"
+                elif any(k in dept_lower for k in ["software & qa", "software", "sdet", "developer", "development", "frontend", "backend", "fullstack", "devops", "cloud", "web dev"]):
+                    matched_dept = "Engineering - Software & QA"
+                elif any(k in dept_lower for k in ["hardware", "embedded", "vlsi", "telecom infra", "network engineer"]):
+                    matched_dept = "Engineering - Hardware & Networks"
+                elif any(k in dept_lower for k in ["sales", "bd", "business development", "sdr", "bdr", "inside sales", "account executive"]):
+                    matched_dept = "Sales & Business Development"
+                elif any(k in dept_lower for k in ["customer success", "customer service", "customer support", "csm", "call center", "bpo", "operations"]):
+                    matched_dept = "Customer Success, Service & Operations"
+                elif any(k in dept_lower for k in ["security", "cyber", "infosec", "information security", "system admin"]):
+                    matched_dept = "IT & Information Security"
+                elif any(k in dept_lower for k in ["marketing", "communication", "growth", "seo", "sem", "digital marketing", "pr"]):
+                    matched_dept = "Marketing & Communication"
+                elif any(k in dept_lower for k in ["hr", "human resources", "recruitment", "talent acquisition", "people ops", "payroll"]):
+                    matched_dept = "Human Resources"
+                elif any(k in dept_lower for k in ["finance", "accounting", "tax", "audit", "ca", "financial reporting"]):
+                    matched_dept = "Finance & Accounting"
+                elif any(k in dept_lower for k in ["bfsi", "banking", "wealth", "trading", "investment", "fintech", "insurance"]):
+                    matched_dept = "BFSI, Investments & Trading"
+                elif any(k in dept_lower for k in ["r&d", "research & development", "scientist", "scientific"]):
+                    matched_dept = "Research & Development"
+                elif any(k in dept_lower for k in ["healthcare", "life science", "pharma", "biotech", "clinical", "hospital", "medical"]):
+                    matched_dept = "Healthcare & Life Sciences"
+                elif any(k in dept_lower for k in ["teaching", "training", "trainer", "professor", "faculty", "education", "tutor"]):
+                    matched_dept = "Teaching & Training"
+                elif any(k in dept_lower for k in ["manufacturing", "production", "plant", "mechanical", "industrial"]):
+                    matched_dept = "Production, Manufacturing & Engineering"
+                elif any(k in dept_lower for k in ["admin", "facility", "facilities", "office manager", "front office"]):
+                    matched_dept = "Administration & Facilities"
+                elif any(k in dept_lower for k in ["product management", "product manager", "pm", "product owner", "technical pm"]):
+                    matched_dept = "Product Management"
+                elif any(k in dept_lower for k in ["content", "editorial", "journalism", "copywriter", "writer", "editor"]):
+                    matched_dept = "Content, Editorial & Journalism"
+                elif any(k in dept_lower for k in ["procurement", "supply chain", "logistics", "purchase", "warehouse", "inventory"]):
+                    matched_dept = "Procurement & Supply Chain"
+                elif any(k in dept_lower for k in ["quality assurance", "quality control", "iso"]):
+                    matched_dept = "Quality Assurance"
+                elif any(k in dept_lower for k in ["ux", "ui/ux", "product designer", "graphic designer", "visual design", "design & architecture"]):
+                    matched_dept = "UX, Design & Architecture"
+                elif any(k in dept_lower for k in ["food", "beverage", "hospitality", "hotel", "chef", "restaurant", "catering"]):
+                    matched_dept = "Food, Beverage & Hospitality"
+                elif any(k in dept_lower for k in ["consulting", "consultant", "advisory", "strategy consultant"]):
+                    matched_dept = "Consulting"
+                elif any(k in dept_lower for k in ["project & program", "project management", "program management", "scrum master", "agile"]):
+                    matched_dept = "Project & Program Management"
+                elif any(k in dept_lower for k in ["media", "entertainment", "video editor", "animator", "broadcasting"]):
+                    matched_dept = "Media Production & Entertainment"
+                elif any(k in dept_lower for k in ["strategic", "top management", "strategy", "cxo", "ceo", "director", "vp", "general manager"]):
+                    matched_dept = "Strategic & Top Management"
+                elif any(k in dept_lower for k in ["construction", "site engineering", "civil", "structural"]):
+                    matched_dept = "Construction & Site Engineering"
+                elif any(k in dept_lower for k in ["csr", "social service", "ngo", "social work", "sustainability"]):
+                    matched_dept = "CSR & Social Service"
+                elif any(k in dept_lower for k in ["environment health", "ehs", "safety officer", "industrial safety"]):
+                    matched_dept = "Environment Health & Safety"
+                elif any(k in dept_lower for k in ["legal", "regulatory", "lawyer", "advocate", "compliance"]):
+                    matched_dept = "Legal & Regulatory"
+                elif any(k in dept_lower for k in ["retail", "ecommerce", "e-commerce", "merchandising", "category manager"]):
+                    matched_dept = "Merchandising, Retail & eCommerce"
+                elif any(k in dept_lower for k in ["security services", "physical security", "security guard", "surveillance"]):
+                    matched_dept = "Security Services"
+                else:
+                    matched_dept = dept_raw
+                    
+            params["department"] = matched_dept
+
+        # 12. Specific Company Name
+        if uf.company:
+            params["company"] = uf.company.strip()
+
+        # 13. Specific Skills
+        if uf.skills:
+            params["skills"] = uf.skills.strip()
+
         return params
 
     @classmethod
@@ -1040,8 +1355,20 @@ class FilterEngine:
             "tab": "any",
             "usVisaNotRequired": "any"
         }
-        if uf.location:
-            params["locations"] = uf.location
+        if uf.work_mode and ("remote" in uf.work_mode.lower() or "wfh" in uf.work_mode.lower()):
+            params["locations"] = "Remote"
+        elif uf.location:
+            loc_lower = uf.location.lower().strip()
+            if "remote" in loc_lower:
+                params["locations"] = "Remote"
+            elif loc_lower in ["uk", "gb", "united kingdom", "great britain", "england"]:
+                params["locations"] = "GB"
+            elif loc_lower in ["india", "in", "ind"]:
+                params["locations"] = "IN"
+            elif loc_lower in ["us", "usa", "united states", "america"]:
+                params["locations"] = "US"
+            else:
+                params["locations"] = uf.location.strip()
         if uf.experience_min is not None:
             params["minExperience"] = str(uf.experience_min)
         return params

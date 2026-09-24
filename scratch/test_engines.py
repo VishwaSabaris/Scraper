@@ -1,29 +1,20 @@
+import urllib.request
 import urllib.parse
-import json
-import requests
 from bs4 import BeautifulSoup
 
-def test_engines():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-    
-    # 1. DuckDuckGo HTML
-    ddg_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote('site:careerbuilder.com Sales Development Representative')}"
-    r = requests.get(ddg_url, headers=headers, timeout=10)
-    print("DDG status:", r.status_code)
-    soup = BeautifulSoup(r.text, 'html.parser')
-    links = [a.get('href') for a in soup.find_all('a', class_='result__url')]
-    print("DDG links:", len(links), links[:3])
-    
-    # 2. Careerbuilder API check
-    # Check if careerbuilder has public api
-    cb_api = "https://www.careerbuilder.com/api/jobs"
-    try:
-        r2 = requests.get(cb_api, params={"keywords": "Sales Development Representative"}, headers=headers, timeout=10)
-        print("CB API status:", r2.status_code)
-    except Exception as e:
-        print("CB API error:", e)
+headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-if __name__ == "__main__":
-    test_engines()
+for name, url in [
+    ('Bing', 'https://www.bing.com/search?q=site%3Awellfound.com%2Fjobs+lead+generation'),
+    ('Yahoo', 'https://search.yahoo.com/search?p=site%3Awellfound.com%2Fjobs+lead+generation')
+]:
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        html = urllib.request.urlopen(req, timeout=10).read().decode('utf-8', errors='ignore')
+        soup = BeautifulSoup(html, 'html.parser')
+        links = [a['href'] for a in soup.find_all('a', href=True) if 'wellfound.com' in a['href']]
+        print(name, 'wellfound links:', len(links))
+        for l in links[:5]:
+            print('  ', l)
+    except Exception as e:
+        print(name, 'error:', e)

@@ -169,7 +169,7 @@ def is_description_incomplete(details_str: str) -> bool:
 
 def enrich_single_job(record: Dict[str, Any]) -> Dict[str, Any]:
     """Enriches a single job record with full description if missing or short."""
-    current_desc = record.get("Company / Job Details", "").strip()
+    current_desc = (record.get("Job Description") or record.get("Company / Job Details") or record.get("job_description") or "").strip()
     apply_link = record.get("Apply Link", "").strip()
     source = record.get("Source", "").strip().lower()
     role = record.get("Job Role", "").strip()
@@ -177,9 +177,11 @@ def enrich_single_job(record: Dict[str, Any]) -> Dict[str, Any]:
     
     # If already rich and detailed (> 120 chars), preserve it
     if not is_description_incomplete(current_desc) and len(current_desc) > 120 and "..." not in current_desc[-10:]:
+        record["Job Description"] = current_desc
         return record
         
     if not apply_link or not apply_link.startswith("http"):
+        record["Job Description"] = current_desc
         return record
 
     new_desc = None
@@ -197,11 +199,13 @@ def enrich_single_job(record: Dict[str, Any]) -> Dict[str, Any]:
         prefix = f"Company: {company} | " if company and company != "N/A" and not new_desc.startswith(company) else ""
         full_text = prefix + new_desc
         # Truncate at max 1000 characters for optimal CSV portability
-        record["Company / Job Details"] = full_text[:1000] if len(full_text) > 1000 else full_text
+        record["Job Description"] = full_text[:1000] if len(full_text) > 1000 else full_text
     elif not current_desc or current_desc == "N/A":
         # Fallback informative context
         loc = record.get("Location", "")
-        record["Company / Job Details"] = f"Role: {role} | Company: {company} | Location: {loc} | Direct Apply: {apply_link}"
+        record["Job Description"] = f"Role: {role} | Company: {company} | Location: {loc} | Direct Apply: {apply_link}"
+    else:
+        record["Job Description"] = current_desc
         
     return record
 
@@ -223,7 +227,7 @@ def enrich_job_csv(csv_path: str, max_workers: int = 15):
 
     import concurrent.futures
     
-    needs_enrichment = [r for r in records if is_description_incomplete(r.get("Company / Job Details", ""))]
+    needs_enrichment = [r for r in records if is_description_incomplete(r.get("Job Description") or r.get("Company / Job Details", ""))]
     print(f"[*] Found {len(needs_enrichment)} out of {len(records)} records needing description enhancement.")
 
     if not needs_enrichment:
@@ -236,7 +240,7 @@ def enrich_job_csv(csv_path: str, max_workers: int = 15):
         for future in concurrent.futures.as_completed(future_to_rec):
             try:
                 updated = future.result()
-                det = updated.get("Company / Job Details", "")
+                det = updated.get("Job Description") or updated.get("Company / Job Details", "")
                 if len(det) > 80:
                     enriched_count += 1
             except Exception:
@@ -248,12 +252,18 @@ def enrich_job_csv(csv_path: str, max_workers: int = 15):
     canonical_headers = [
         "Job Role", "Company Name", "Location", "Date Posted",
         "Apply Link", "Company Link", "No. of Applicants",
-        "Company / Job Details", "Source"
+        "Job Description", "Source",
+        "website", "apply_link_url"
     ]
-    with open(csv_path, mode="w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=canonical_headers)
+    
+    tmp_path = f"{csv_path}.tmp"
+    with open(tmp_path, mode="w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=canonical_headers, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(cleaned_records)
+    
+    if os.path.exists(tmp_path):
+        os.replace(tmp_path, csv_path)
 
     print(f"[++++] Description Enrichment Complete! Successfully enriched {enriched_count} / {len(records)} records with full job descriptions.")
 
